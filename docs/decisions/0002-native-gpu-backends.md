@@ -8,20 +8,22 @@
 
 ## Context
 
-The first GPU targets are NVIDIA and Apple Metal. The mesh needs one way to describe hardware and schedule work, but the two platforms expose different native runtimes and performance libraries.
+The first GPU targets are NVIDIA CUDA on Windows and Linux and Apple Metal on macOS. The mesh needs one way to describe hardware and schedule work, but the platforms expose different native runtimes and performance libraries.
 
 ## Decision
 
 Keep one platform-neutral Rust boundary with two native implementations:
 
-- CUDA for NVIDIA GPUs.
-- Metal for Apple GPUs.
+- CUDA for NVIDIA GPUs on native Windows and Linux.
+- Metal for Apple GPUs on macOS Apple Silicon.
 
 Separate hardware discovery from compute execution.
 
 Use Candle as the first framework to evaluate for inference because it exposes both CUDA and Metal features from Rust. Do not select the distributed training framework until a real training workload is defined and measured.
 
 Canonical details: [GPU backends](../architecture/compute/gpu-backends.md)
+
+Required Windows target: [ADR-0006](0006-windows-nvidia-required.md)
 
 ## Rejected: one `wgpu` execution path for every GPU
 

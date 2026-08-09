@@ -3,17 +3,18 @@
 | Field | Value |
 |---|---|
 | Status | Platform support accepted; execution libraries proposed |
-| Canonical for | NVIDIA and Apple GPU boundaries |
+| Canonical for | Windows and Linux NVIDIA CUDA plus macOS Apple Metal boundaries |
 | Parent | [Architecture overview](../README.md) |
 
 ## Accepted targets
 
-The first node version supports:
+| Host | GPU backend | Status |
+|---|---|---|
+| Windows x64 | NVIDIA CUDA | Required |
+| Linux x64 | NVIDIA CUDA | Required |
+| macOS Apple Silicon | Apple Metal | Required |
 
-1. NVIDIA GPUs through CUDA.
-2. Apple GPUs through Metal on macOS.
-
-These are separate native paths behind one Rust interface.
+These are separate native paths behind one Rust interface. AMD GPUs are outside the first target matrix.
 
 ## Why not one generic GPU API?
 
@@ -72,6 +73,8 @@ NVML is NVIDIA's management library. It can report GPU identity, memory, utiliza
 
 The node must treat NVML as optional at runtime. A missing driver should produce an unsupported-device report, not crash the node.
 
+On Windows, discovery must load NVML through the installed NVIDIA driver, report missing or incompatible DLLs clearly, and keep the node available for networking when CUDA is unavailable.
+
 ### Compute
 
 **Proposed first framework:** Hugging Face Candle with its `cuda` feature.
@@ -79,6 +82,8 @@ The node must treat NVML as optional at runtime. A missing driver should produce
 Candle provides Rust tensors and a CUDA device through the same model API used by its Metal backend. This reduces initial model integration work.
 
 For later performance work, CUDA-specific kernels or libraries may be used behind the CUDA backend. The common interface must not prevent that.
+
+The selected inference engine and Model Family Adapter must pass native Windows MSVC and Linux CUDA proofs. Windows support through WSL alone does not satisfy the target.
 
 ## Apple Metal path
 
@@ -117,8 +122,8 @@ metal = []
 
 Rules:
 
-- Linux and Windows NVIDIA builds may enable `cuda`.
-- macOS Apple Silicon builds may enable `metal`.
+- Windows and Linux NVIDIA builds must support the `cuda` feature.
+- macOS Apple Silicon builds must support the `metal` feature.
 - A build may contain neither backend and still run node networking.
 - Unsupported backend code must not compile on the wrong platform.
 - Peer capability messages report only backends that initialized successfully.

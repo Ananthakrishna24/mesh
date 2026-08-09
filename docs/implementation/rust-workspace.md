@@ -122,12 +122,13 @@ It is the default workspace package and produces the `mesh` executable. It start
 
 ## Build targets
 
-At minimum, design for:
+At minimum, build and verify:
 
-- `x86_64-unknown-linux-gnu` with optional CUDA.
-- `aarch64-apple-darwin` with optional Metal.
+- `x86_64-pc-windows-msvc` with NVIDIA CUDA.
+- `x86_64-unknown-linux-gnu` with NVIDIA CUDA.
+- `aarch64-apple-darwin` with Apple Metal.
 
-Windows CUDA support may be added, but it is not accepted as a first implementation target yet.
+Windows CUDA is a required native target. WSL-only execution does not satisfy it. Canonical decision: [ADR-0006](../decisions/0006-windows-nvidia-required.md).
 
 ## First implementation slice
 

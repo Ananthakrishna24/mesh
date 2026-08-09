@@ -18,7 +18,7 @@ Accepted areas:
 - Local resource reservations.
 - Single-node, replica, and layer-pipeline inference modes.
 - Provider-backed partial model distribution.
-- Native CUDA and Metal backend boundaries.
+- Required native NVIDIA CUDA support on Windows and Linux and Apple Metal support on macOS.
 
 ## Remaining architecture decisions
 
@@ -33,7 +33,7 @@ Select one dense decoder model family. The adapter must:
 - Calculate per-layer memory.
 - Build only an assigned continuous layer range.
 - Handle embedding, final normalization, output head, and tied weights.
-- Validate CUDA and Metal operation support.
+- Validate native Windows CUDA, Linux CUDA, and macOS Metal operation support.
 
 Recommended first direction: a small dense Llama-compatible model for correctness, followed by a larger model using the same adapter.
 
@@ -43,7 +43,7 @@ Select:
 
 - FP16 correctness baseline.
 - One later 4-bit format for large-model capacity.
-- Exact CUDA and Metal support requirements.
+- Exact Windows CUDA, Linux CUDA, and Metal support requirements.
 
 Do not begin with several quantization formats.
 
@@ -121,7 +121,7 @@ Build:
 
 Proof:
 
-> `cargo run --release` opens one native application without a frontend build or helper process.
+> `cargo run --release` opens one native application without a frontend build or helper process on Windows, Linux, and macOS development hosts after platform prerequisites are installed.
 
 ### P02 — GUI-driven two-node enrollment
 
@@ -137,22 +137,22 @@ Build:
 
 Proof:
 
-> Two internet-connected PCs enroll through the GUI, exchange static node state, restart, and reconnect without command-line arguments.
+> Windows, Linux, and macOS applications can enroll through the GUI, exchange static node state, restart, and reconnect without command-line arguments.
 
 ### P03 — Hardware and network discovery
 
 Build:
 
 - CPU, memory, and disk discovery.
-- NVIDIA discovery through NVML.
-- Apple Metal discovery.
+- NVIDIA discovery through NVML on Windows and Linux.
+- Apple Metal discovery on macOS.
 - Capability reports.
 - Directional network benchmark.
 - GUI hardware and peer status.
 
 Proof:
 
-> Each enrolled PC shows its own and connected peers' measured capabilities.
+> Windows and Linux NVIDIA peers and a macOS Metal peer truthfully report measured hardware and network capabilities.
 
 ### P04 — Automatic direct connectivity
 
@@ -196,15 +196,15 @@ Build:
 
 Proof:
 
-> Selected nodes automatically download different verified tensor assignments for one immutable model revision.
+> Selected Windows, Linux, and macOS nodes automatically download different verified tensor assignments for one immutable model revision.
 
 ### P07 — Single-node inference
 
 Build:
 
 - First Model Family Adapter.
-- Candle CUDA stage.
-- Candle Metal stage.
+- Candle CUDA stage validated natively on Windows and Linux.
+- Candle Metal stage validated on macOS Apple Silicon.
 - Tokenizer.
 - KV cache.
 - Sampling.
@@ -212,7 +212,7 @@ Build:
 
 Proof:
 
-> The same accepted model produces valid streamed output on one supported CUDA or Metal node.
+> The same accepted model produces valid streamed output on Windows CUDA, Linux CUDA, and macOS Metal.
 
 ### P08 — Replica inference
 
@@ -242,7 +242,7 @@ Build:
 
 Proof:
 
-> A model that does not fit on one selected GPU runs across at least two directly connected PCs.
+> A model that does not fit on one selected GPU runs across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
 
 ### P10 — Failure and restart behavior
 
@@ -265,7 +265,7 @@ Measure against one-node baselines:
 - Replica throughput.
 - Two-stage and three-stage token delay.
 - Prompt-processing bandwidth.
-- CUDA-to-CUDA and CUDA-to-Metal paths.
+- Windows-CUDA-to-Linux-CUDA, CUDA-to-Metal, and same-platform paths.
 - Quantization memory and speed.
 - Model download and warm-up time.
 
@@ -286,4 +286,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Select the first model family, model size, and correctness format. This fixes the first Model Family Adapter, tensor mapping, KV-cache shape, required CUDA and Metal operations, and the end-to-end inference proof.
+Select the first model family, model size, and correctness format. This fixes the first Model Family Adapter, tensor mapping, KV-cache shape, required native Windows CUDA, Linux CUDA, and macOS Metal operations, and the end-to-end inference proof.

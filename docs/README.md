@@ -5,7 +5,7 @@
 | Status | Active design |
 | Current phase | Hardware mesh plus distributed inference design |
 | Implementation language | Rust |
-| First GPU targets | NVIDIA CUDA and Apple Metal |
+| First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
 
 This folder is the project memory. Read it before changing architecture or code.
 
@@ -38,6 +38,7 @@ This folder is the project memory. Read it before changing architecture or code.
 | Which inference work can run in parallel? | [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md) |
 | Why QUIC and Quinn? | [ADR-0001](decisions/0001-direct-quic-transport.md) |
 | How do NVIDIA and Metal fit? | [GPU backends](architecture/compute/gpu-backends.md) |
+| Is Windows NVIDIA a required target? | [ADR-0006](decisions/0006-windows-nvidia-required.md) |
 | How should the Rust repository be split? | [Rust workspace plan](implementation/rust-workspace.md) |
 | What remains to be decided and built? | [Architecture and implementation roadmap](implementation/roadmap.md) |
 
@@ -51,7 +52,7 @@ Do not copy a rule into several documents. Update the canonical document and lin
 - Every PC runs the same node software.
 - A job creator may control its own job. It does not control the mesh.
 - Rust is the implementation language.
-- NVIDIA CUDA and Apple Metal are the first GPU targets.
+- NVIDIA CUDA on Windows and Linux and Apple Metal on macOS are required first-class GPU targets.
 - LLM inference architecture is accepted but not implemented. Distributed training remains deferred.
 - The primary product is one native desktop application with guided onboarding; separate commands are not required for normal use.
 

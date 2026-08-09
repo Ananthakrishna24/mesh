@@ -9,5 +9,6 @@ Read accepted decisions before changing a related subsystem.
 | [ADR-0003](0003-wan-inference-modes.md) | WAN inference modes and local reservations | Accepted |
 | [ADR-0004](0004-provider-backed-model-distribution.md) | Immutable provider-backed model distribution | Accepted architecture; first adapter proposed |
 | [ADR-0005](0005-native-desktop-onboarding.md) | Native Rust desktop onboarding | Accepted |
+| [ADR-0006](0006-windows-nvidia-required.md) | Windows NVIDIA CUDA is a required target | Accepted |
 
 A new decision must state its context, selected approach, rejected approaches, and consequences. A replacement decision must link to the decision it replaces.

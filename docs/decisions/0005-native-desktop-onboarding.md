@@ -60,8 +60,10 @@ Starting a daemon and then opening a browser creates two visible parts and addit
 - Core state belongs to the node runtime, not UI persistence.
 - Closing the first-version application stops the node.
 - Background service and tray modes remain deferred.
-- Packaged releases still need normal per-platform build and signing work later.
-- Linux source builds may require normal native window-system development packages; no application-specific setup command is added.
+- Packaged releases require Windows, Linux, and macOS build and signing work.
+- Windows CUDA source builds require normal MSVC and CUDA prerequisites; Linux source builds may require native window-system development packages.
+- Packaged users do not install Rust or build tools.
+- Windows platform requirement: [ADR-0006](0006-windows-nvidia-required.md).
 
 ## Source
 

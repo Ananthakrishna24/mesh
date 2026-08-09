@@ -290,6 +290,24 @@ A **Reset this PC** action exists under advanced settings. It explains that rese
 
 For the first version, closing the application stops this node after a graceful shutdown. Background service and system-tray modes are deferred. The interface states this clearly.
 
+## Windows requirement
+
+Windows x64 with NVIDIA CUDA is a required first-class target.
+
+For packaged users, opening the application is the complete startup flow. The user does not install Rust, Visual Studio, or CUDA build tools. A compatible NVIDIA driver remains a hardware prerequisite.
+
+The Windows application must:
+
+- Detect the NVIDIA driver, NVML, and CUDA runtime.
+- Explain missing or incompatible components in the GUI.
+- Request or guide Windows Firewall permission for direct UDP connections.
+- Use the normal Windows application-data location.
+- Use Windows credential storage for provider tokens when available.
+- Register `.mesh-invite` files and `mesh://` links in the packaged installer.
+- Remain usable as a networking-only peer when CUDA initialization fails, while clearly marking compute unavailable.
+
+Native Windows CUDA inference must be proven. WSL-only support is not sufficient. Canonical decision: [ADR-0006](../../decisions/0006-windows-nvidia-required.md).
+
 ## Accessibility and wording
 
 - Use short sentences.
