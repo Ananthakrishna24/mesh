@@ -278,7 +278,9 @@ Rules:
 
 Provider credentials remain local to each node. The coordinator sends model identity and artifact references, not another node's access token.
 
-For gated models, each selected node must already have valid provider access or use a separately accepted credential-distribution design. A node without access rejects preparation before commit.
+For gated models, each selected node must already have valid provider access. A node without access rejects preparation before commit. The first version does not distribute credentials between peers.
+
+Canonical storage contract: [Persistent state](../system/persistent-state.md)
 
 ## Failure handling
 

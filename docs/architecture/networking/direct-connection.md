@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted direction; wire fields are proposed |
+| Status | Accepted |
 | Canonical for | How PCs find and connect directly to each other |
 | Parent | [Architecture overview](../README.md) |
 | Decision | [ADR-0001: Quinn QUIC transport](../../decisions/0001-direct-quic-transport.md) |
@@ -29,7 +29,8 @@ QUIC always encrypts its transport. The project does not add a separate encrypti
 struct LocalNode {
     mesh_id: MeshId,
     node_id: NodeId,
-    protocol_version: u16,
+    protocol_major: u16,
+    protocol_minor: u16,
     candidates: Vec<EndpointCandidate>,
 }
 
@@ -49,11 +50,11 @@ enum CandidateKind {
 }
 ```
 
-These types describe the information. Their final serialization is not yet accepted.
+These types describe local state. Their wire representation follows the accepted [control protocol](../protocol/control-protocol.md).
 
 ## A. Start a node
 
-1. Load or create a stable `NodeId`.
+1. Load or create the persisted certificate and derive its stable `NodeId`.
 2. Load or create the `MeshId`.
 3. Bind one UDP socket.
 4. Create one Quinn endpoint on that socket.
@@ -78,18 +79,9 @@ Do not label a candidate as reachable until a peer successfully uses it.
 
 ## C. Create an invite
 
-The invite contains only enough information to reach one existing peer:
+The invite contains the inviter identity, Mesh ID, protocol range, one-time enrollment values, expiry, and current endpoint candidates.
 
-```rust
-struct JoinInvite {
-    format_version: u16,
-    mesh_id: MeshId,
-    inviter_node_id: NodeId,
-    candidates: Vec<EndpointCandidate>,
-}
-```
-
-The exact encoding is deferred. The desktop application wraps the same payload as pasted text, a `.mesh-invite` file, or a `mesh://` URI. Canonical user flow: [Enrollment contract](../onboarding/enrollment-contract.md).
+Its exact Protobuf payload, `mesh1:` text, `.mesh-invite` file, `mesh://` URI, and QR encoding are defined by the [Enrollment contract](../onboarding/enrollment-contract.md).
 
 ## D. Join through the inviter
 
@@ -106,38 +98,13 @@ Trying likely addresses with a small delay is faster than waiting for each faile
 
 ## E. Mesh handshake
 
-The first bidirectional QUIC stream is the control stream.
+The first bidirectional QUIC stream is the control stream. Its exact framing, `HELLO`, `WELCOME`, version negotiation, errors, and limits follow the [control protocol](../protocol/control-protocol.md).
 
-The joining peer sends:
+The TLS certificate supplies the sender identity. Its SHA-256 digest must equal the `sender_node_id` in every control envelope.
 
-```text
-HELLO
-- protocol version
-- mesh ID
-- node ID
-- local candidate addresses
-- hardware capability digest
-```
+During first enrollment, the inviter identity must match the invitation and the joining peer must present its enrollment ID and secret. During reconnection, both Node IDs and certificates must already match Peer Store.
 
-The receiving peer checks:
-
-1. The protocol version is supported.
-2. The mesh ID matches.
-3. The node ID is not its own ID.
-
-It then returns:
-
-```text
-WELCOME
-- protocol version
-- mesh ID
-- node ID
-- address observed for the joining peer
-- current peer snapshot
-- local hardware capability digest
-```
-
-A failed check closes the connection with a clear application error code.
+A failed check sends a typed control error when possible and closes the connection.
 
 ## F. Connect to the remaining peers
 
@@ -207,9 +174,10 @@ Reconnect delays should use capped exponential backoff with jitter. Exact timing
 
 | Stream | Direction | Use |
 |---|---|---|
-| Control | Bidirectional, long-lived | Handshake, peer updates, health, job control |
-| Work | One stream per transfer | Model data, tensor chunks, datasets, or other job input |
-| Result | One stream per transfer | Job results and large outputs |
+| Control | Bidirectional, long-lived | Length-prefixed Protobuf handshake, peer updates, health, and job control |
+| Activation | Unidirectional, one stream per tensor | Fixed header and raw inference activation |
+| Artifact or work | One stream per transfer | Model data, tensor chunks, datasets, or other job input |
+| Result | One stream per transfer | Large job results and outputs |
 | Datagram | Unreliable | Optional hole-punch probes and disposable measurements |
 
 Do not place a large model transfer on the control stream. It would delay health and job-control messages.
@@ -222,8 +190,6 @@ No software-only algorithm can guarantee direct communication through every CGNA
 
 ## Open questions
 
-- Final invite encoding.
-- Exact control-message serialization.
 - Router-mapping crates for UPnP, NAT-PMP, and PCP.
 - Full-mesh peer-count limit.
 - Candidate expiry and peer-record merge rules.

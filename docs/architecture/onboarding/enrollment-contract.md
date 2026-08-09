@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted behavior; exact encoding proposed |
+| Status | Accepted |
 | Canonical for | Invitation contents, automatic enrollment states, and user-facing failures |
 | Parent | [Desktop onboarding](README.md) |
 | Network flow | [Direct peer connection](../networking/direct-connection.md) |
@@ -11,54 +11,101 @@
 
 Enroll a PC with one invitation and no manual networking commands when the internet path allows automatic direct access.
 
+## Node identity
+
+The first startup creates:
+
+- One self-signed ECDSA P-256 certificate.
+- Its PKCS#8 private key.
+- A 32-byte `NodeId` equal to SHA-256 of the complete certificate DER.
+
+Certificate parameters are fixed for the first version:
+
+- Signature algorithm: ECDSA P-256 with SHA-256.
+- One self-signed leaf certificate and no chain.
+- Subject common name: `mesh-node`.
+- Valid from 24 hours before creation until 20 years after creation.
+- No IP address or public DNS identity is placed in the certificate.
+- The same certificate is used for Quinn client and server roles.
+
+The certificate, key, and Node ID are persisted together and reused after restart. They are not regenerated during normal startup.
+
+Every QUIC connection uses mutual TLS:
+
+1. Rustls verifies proof of possession during the TLS handshake.
+2. The certificate must be within its validity interval.
+3. During enrollment, the joining node accepts only the inviter certificate whose SHA-256 digest equals the inviter Node ID in the invitation.
+4. The inviter reads the joining certificate, derives its Node ID, and binds the invitation to it.
+5. After enrollment, each side accepts only certificates matching its persisted Peer Store.
+6. DNS names and public certificate authorities do not identify mesh peers.
+7. An explicit identity reset creates a new Node ID and requires enrollment again.
+
+The inviter must accept an unknown joining certificate provisionally at the TLS layer because the joining Node ID is not in Peer Store yet. This provisional connection may process only one bounded `HELLO`. It cannot change durable mesh state, query resources, or start work until the invitation secret binds that certificate and the enrollment transaction commits.
+
+Canonical decision: [ADR-0009](../../decisions/0009-quic-identity-and-invitations.md)
+
 ## Invitation lifecycle
 
 1. A connected peer creates an invitation.
-2. The invitation records the inviter's current reachable candidates.
-3. The user moves the invitation to the new PC.
-4. The new PC uses it once to join.
-5. The invitation expires after a configured time or successful use.
-6. A new invitation is generated when addresses change or the invitation expires.
+2. It stores the invitation ID, a hash of its secret, expiry, and `PENDING` state.
+3. The invitation records the inviter's current reachable candidates.
+4. The user moves the invitation to the new PC.
+5. The new PC presents the invitation ID and secret inside its first TLS-protected `HELLO`.
+6. The inviter atomically binds the invitation to the joining certificate's Node ID.
+7. A retry from that same Node ID is allowed until enrollment completes or the invitation expires.
+8. A different Node ID is rejected.
+9. The invitation becomes `CONSUMED` after permanent peer state is written.
+10. A new invitation is generated when candidates change materially or the invitation expires.
 
-Expiration and one-time use avoid confusing retries with stale connection information. Exact durations remain proposed until connection tests exist.
+The default expiry is 30 minutes. The inviter's clock decides expiry. Successful enrollment and invitation state changes are committed in one local database transaction.
 
 ## Invitation data
 
-| Field | Obtained from | User action |
-|---|---|---|
-| Format version | Application constant | None |
-| Protocol version range | Application build | None |
-| Mesh ID | Existing local state | None |
-| Inviter Node ID | Existing local state | None |
-| Inviter display name | Existing local state | None |
-| IPv6 candidates | Address Candidate Collector | None |
-| Public IPv4 candidates | Address Candidate Collector | None |
-| Router-mapped candidates | Automatic UPnP, NAT-PMP, or PCP result | None |
-| Manually configured candidate | Advanced network settings | Only after automatic failure |
-| QUIC certificate fingerprint | Existing local identity | None |
-| Enrollment ID | Generated for this invitation | None |
-| Expiry | Generated for this invitation | None |
+The accepted logical schema is:
 
-The user does not look up an IP address, port, Mesh ID, Node ID, or certificate fingerprint during normal enrollment.
-
-## Proposed logical form
-
-```rust
-struct EnrollmentInvite {
-    format_version: u16,
-    protocol_min: u16,
-    protocol_max: u16,
-    mesh_id: MeshId,
-    inviter_node_id: NodeId,
-    inviter_name: String,
-    certificate_fingerprint: String,
-    enrollment_id: EnrollmentId,
-    expires_at: Timestamp,
-    candidates: Vec<EndpointCandidate>,
+```proto
+message EnrollmentInviteV1 {
+  uint32 format_version = 1;          // exactly 1
+  uint32 protocol_major = 2;
+  uint32 protocol_minor_min = 3;
+  uint32 protocol_minor_max = 4;
+  bytes mesh_id = 5;                  // exactly 16 bytes
+  bytes inviter_node_id = 6;          // exactly 32 bytes
+  string inviter_name = 7;            // 1..128 UTF-8 bytes
+  bytes enrollment_id = 8;            // exactly 16 random bytes
+  bytes enrollment_secret = 9;        // exactly 32 random bytes
+  int64 expires_at_unix_ms = 10;
+  repeated EndpointCandidate candidates = 11; // at most 32
 }
 ```
 
-The exact serialized encoding remains part of the wire-format decision. The GUI supports text, file, and URI wrappers around the same encoded payload.
+Validation happens before any connection attempt:
+
+- The decoded Protobuf payload is at most 64 KiB.
+- Every fixed-size identifier has its exact length.
+- The protocol range is ordered and includes the current major version.
+- The expiry is present. The joining PC may warn when its local clock says expired, but the inviter makes the authoritative expiry decision.
+- Candidate ports are nonzero and candidate addresses are valid.
+- Duplicate candidates are removed.
+
+The user does not look up an IP address, port, Mesh ID, Node ID, or certificate digest during normal enrollment.
+
+## Exact encoding
+
+1. Encode `EnrollmentInviteV1` with Prost Protocol Buffers.
+2. Encode those bytes with unpadded Base64 URL encoding.
+3. Prefix the result with `mesh1:` for copied text.
+
+All GUI inputs normalize to the same Protobuf bytes:
+
+| Form | Encoding |
+|---|---|
+| Copied text | `mesh1:<base64url>` |
+| File | UTF-8 `mesh1:<base64url>` in a `.mesh-invite` file |
+| URI | `mesh://enroll/<base64url>` |
+| QR code | The same `mesh://enroll/<base64url>` URI |
+
+Whitespace around copied text or file content is ignored. Whitespace inside the payload is invalid. Unknown invite format versions are rejected rather than guessed.
 
 ## Data shared after connection
 

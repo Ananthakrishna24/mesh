@@ -21,6 +21,13 @@ Accepted areas:
 - Dense Qwen3-4B complete-model proof and Qwen3-8B distributed proof.
 - Required native NVIDIA CUDA support on Windows and Linux and Apple Metal support on macOS.
 
+## Locked implementation contracts
+
+- [Control protocol](../architecture/protocol/control-protocol.md): Protobuf through Prost, version `1.0`, fixed length framing, and typed errors.
+- [Enrollment contract](../architecture/onboarding/enrollment-contract.md): certificate-derived Node IDs and exact self-contained invitation encoding.
+- [Persistent state](../architecture/system/persistent-state.md): bundled SQLite with native provider credential stores.
+- [Activation tensor frame](../architecture/protocol/activation-frame.md): fixed 128-byte header and contiguous little-endian FP16 payload.
+
 ## Remaining architecture decisions
 
 Resolve these before their implementation phase begins.
@@ -56,21 +63,9 @@ The first correctness profile uses:
 
 After the unquantized Qwen3-8B pipeline works, select exactly one 4-bit format. Do not begin with several quantization formats.
 
-### A03 — Protocol serialization and versioning
+### A03 and A04 — Resolved
 
-Define exact binary schemas, compatibility rules, timeouts, and error codes for:
-
-- Mesh handshake and peer updates.
-- Resource offers and leases.
-- Model preparation and readiness.
-- Inference requests and cancellation.
-- Activation and token transfer.
-
-### A04 — Activation wire format
-
-Define deployment and request IDs, stage index, sequence position, tensor shape, data type, byte order, layout, payload framing, limits, and optional checks.
-
-Initial direction: contiguous little-endian FP16 data with one logical activation per QUIC transfer stream.
+Control serialization, protocol versioning, errors, and activation framing are accepted in the [control protocol](../architecture/protocol/control-protocol.md) and [activation tensor frame](../architecture/protocol/activation-frame.md).
 
 ### A05 — Tokenizer and sampling ownership
 
@@ -94,11 +89,10 @@ Define directional delay and bandwidth tests, measurement age, stability, comput
 
 Select Rust crates for UPnP, NAT-PMP, and PCP. Prove Quinn can use the mapped UDP socket. Keep manual UDP forwarding as the guided fallback.
 
-### A09 — Invite encoding and QUIC identity
+### A09 — Resolved
 
-Finalize invitation text, file, URI, expiry, certificate creation, certificate acceptance, stable Node ID binding, and restart persistence.
+Invitation encoding and QUIC identity are accepted in the [Enrollment contract](../architecture/onboarding/enrollment-contract.md).
 
-Canonical user contract: [Enrollment contract](../architecture/onboarding/enrollment-contract.md)
 
 ### A10 — Peer-record merge rules
 
@@ -114,7 +108,7 @@ Define `Content-Range`, length, shape, data type, ETag, digest, incomplete-file,
 
 ### A13 — Provider access and local cache
 
-Define local credential storage, provider-access capability, disk reservation, cache limit, eviction, active-artifact protection, and incomplete-download cleanup.
+Provider credential persistence is accepted in [Persistent state](../architecture/system/persistent-state.md). Define provider-access capability reporting, disk reservation, cache limit, eviction thresholds, active-artifact protection, and incomplete-download cleanup.
 
 ## Implementation phases
 
@@ -304,4 +298,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Define protocol serialization, identity, invitation encoding, activation framing, tokenizer, sampling, and KV-cache wire contracts. The first model family and model sizes are now accepted.
+Begin P01 and the manually reachable path of P02. Before automatic internet enrollment is complete, select router-mapping crates and peer-record merge rules. Before P07 inference, lock tokenizer, sampling, KV-cache, provider validation, and network placement contracts.

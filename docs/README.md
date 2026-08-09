@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Active design |
-| Current phase | Hardware mesh plus distributed inference design |
+| Current phase | Implementation-ready P01/P02 foundation; later inference contracts remain |
 | Implementation language | Rust |
 | First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
 
@@ -13,17 +13,20 @@ This folder is the project memory. Read it before changing architecture or code.
 
 1. [Architecture overview](architecture/README.md)
 2. [Node modules](architecture/system/node-modules.md)
-3. [Direct connection algorithm](architecture/networking/direct-connection.md)
-4. [Desktop onboarding](architecture/onboarding/README.md)
-5. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
-6. [Distributed LLM inference](architecture/inference/README.md)
-7. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
-8. [Provider-backed model distribution](architecture/inference/model-distribution.md)
-9. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
-10. [GPU backends](architecture/compute/gpu-backends.md)
-11. [Architecture and implementation roadmap](implementation/roadmap.md)
-12. [Rust workspace plan](implementation/rust-workspace.md)
-13. [Architecture decisions](decisions/)
+3. [Persistent state](architecture/system/persistent-state.md)
+4. [Direct connection algorithm](architecture/networking/direct-connection.md)
+5. [Control protocol](architecture/protocol/control-protocol.md)
+6. [Desktop onboarding](architecture/onboarding/README.md)
+7. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
+8. [Distributed LLM inference](architecture/inference/README.md)
+9. [Activation tensor frame](architecture/protocol/activation-frame.md)
+10. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
+11. [Provider-backed model distribution](architecture/inference/model-distribution.md)
+12. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
+13. [GPU backends](architecture/compute/gpu-backends.md)
+14. [Architecture and implementation roadmap](implementation/roadmap.md)
+15. [Rust workspace plan](implementation/rust-workspace.md)
+16. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -31,10 +34,13 @@ This folder is the project memory. Read it before changing architecture or code.
 |---|---|
 | What are we building now? | [Architecture overview](architecture/README.md) |
 | What runs inside each PC? | [Node modules](architecture/system/node-modules.md) |
+| Where is durable state stored? | [Persistent state](architecture/system/persistent-state.md) |
 | How do two PCs connect? | [Direct connection algorithm](architecture/networking/direct-connection.md) |
+| How are control messages framed and versioned? | [Control protocol](architecture/protocol/control-protocol.md) |
 | How does a user start and enroll a PC? | [Desktop onboarding](architecture/onboarding/README.md) |
 | What exactly is shared during enrollment? | [Enrollment contract](architecture/onboarding/enrollment-contract.md) |
 | How is an LLM placed and run? | [Distributed LLM inference](architecture/inference/README.md) |
+| What is the activation tensor wire format? | [Activation tensor frame](architecture/protocol/activation-frame.md) |
 | Which models are the first proofs? | [Qwen3 model family](architecture/inference/qwen3-model-family.md) |
 | How are partial model weights downloaded and synchronized? | [Provider-backed model distribution](architecture/inference/model-distribution.md) |
 | Which inference work can run in parallel? | [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md) |

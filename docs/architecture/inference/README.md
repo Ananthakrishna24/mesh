@@ -217,19 +217,11 @@ Do not send KV caches across nodes during normal generation.
 
 CUDA and Metal device objects never cross the network.
 
-A worker copies an activation into a negotiated wire representation. The first representation should be FP16 when every selected backend supports the required operations.
+The first representation is one fixed 128-byte header followed by contiguous little-endian FP16 values on one unidirectional QUIC stream. It identifies the deployment, request, transfer, stage boundary, prefill or decode position, tensor shape, data type, and exact byte count.
 
-Each transfer identifies:
+Canonical contract: [Activation tensor frame](../protocol/activation-frame.md)
 
-- Deployment ID.
-- Request ID.
-- Token or prompt-chunk position.
-- Source and destination stage.
-- Tensor shape.
-- Data type.
-- Payload length.
-
-Activation compression and INT8 transfer remain measurement-driven optimizations.
+Activation compression, BF16, and INT8 transfer remain measurement-driven later optimizations.
 
 ## Failure policy for the first version
 

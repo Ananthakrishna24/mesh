@@ -110,14 +110,14 @@ The user selects **Create a new mesh**.
 
 The application automatically:
 
-1. Creates a stable Node ID.
-2. Creates a Mesh ID.
-3. Creates the local QUIC certificate material required by Quinn.
+1. Creates and persists the local QUIC certificate and private key.
+2. Derives the stable Node ID from the certificate.
+3. Creates a Mesh ID.
 4. Starts the UDP listener.
 5. Detects local and public candidate addresses.
 6. Attempts router port mapping.
 7. Scans CPU, memory, disks, NVIDIA CUDA, and Apple Metal.
-8. Saves local node state.
+8. Saves the complete local node state transaction.
 9. Opens the dashboard.
 
 The success screen says:
@@ -252,26 +252,17 @@ This model requires Hugging Face access.
 [ Test access ]
 ```
 
-The application validates the token before saving it. Provider credentials remain local to that PC. Enrollment invitations never contain provider credentials.
+The application validates the token before saving it in the operating system's credential store. Provider credentials remain local to that PC. They never enter SQLite or enrollment invitations.
 
 If a selected inference node lacks model access, its preparation screen explains the missing access and provides the same guided token step. Public models skip this completely.
 
 ## Persistence
 
-Core node state is stored by the node runtime, not in UI widget state.
-
-Persist atomically:
-
-- Node ID.
-- Mesh ID.
-- QUIC certificate material.
-- Known peers and candidate addresses.
-- User-visible PC name.
-- Provider configuration and credentials using the operating-system credential store when available.
-- Model cache metadata.
-- Last completed onboarding step.
+Core node state is stored through `mesh-store`, not in UI widget state. Identity, Mesh ID, peers, invitations, model metadata, and onboarding progress use bundled SQLite transactions. Provider tokens use native credential stores and never fall back to plaintext files.
 
 `eframe` persistence may store window size and harmless UI preferences. It is not the source of truth for node identity or mesh state.
+
+Canonical contract: [Persistent state](../system/persistent-state.md)
 
 ## Restart behavior
 
@@ -286,7 +277,7 @@ The application:
 5. Opens the dashboard immediately.
 6. Shows connection progress without blocking the interface.
 
-A **Reset this PC** action exists under advanced settings. It explains that reset removes local mesh identity and cached state before proceeding.
+A **Reset this PC** action exists under advanced settings. It explains that reset removes local identity, membership, peers, and deployments before proceeding. Verified model-cache deletion is a separate action.
 
 ## Close behavior
 

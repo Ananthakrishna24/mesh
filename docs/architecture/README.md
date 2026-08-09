@@ -26,10 +26,13 @@ The accepted desktop onboarding and inference architecture are documented but no
 
 - [Desktop onboarding](onboarding/README.md)
 - [Enrollment contract](onboarding/enrollment-contract.md)
+- [Persistent state and credentials](system/persistent-state.md)
+- [Control protocol and versioning](protocol/control-protocol.md)
 - [Distributed LLM inference](inference/README.md)
 - [Provider-backed partial model distribution](inference/model-distribution.md)
 - [Inference parallelism and edge cases](inference/parallelism-and-edge-cases.md)
 - [Qwen3 dense 4B and 8B model family](inference/qwen3-model-family.md)
+- [Activation tensor wire format](protocol/activation-frame.md)
 
 Distributed training, gradient synchronization, and a public relay or control service remain outside the accepted inference design.
 

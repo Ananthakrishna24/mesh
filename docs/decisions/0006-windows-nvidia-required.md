@@ -31,7 +31,7 @@ All three targets use the same mesh, enrollment, model-provider, placement, and 
 - CUDA inference is required.
 - Hugging Face model access and Safetensors caching are required.
 - Windows Firewall failures must have a guided recovery screen.
-- Provider credentials use a Windows credential store integration when available.
+- Provider credentials use Windows Credential Manager through the accepted native credential adapter.
 - Application state uses the normal Windows application-data location.
 - Packaged users open one application and do not install Rust or build tools.
 

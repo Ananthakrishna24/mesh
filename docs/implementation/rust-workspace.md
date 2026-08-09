@@ -14,7 +14,8 @@ No Rust workspace exists yet. This document defines the intended boundary before
 apps/
 └── mesh-app/        Default eframe desktop package; binary name `mesh`
 crates/
-├── mesh-core/       Stable IDs, messages, shared errors, node state
+├── mesh-core/       Stable IDs, protocol values, shared errors, node state
+├── mesh-store/      SQLite state, migrations, credentials, cache metadata
 ├── mesh-net/        Quinn endpoint, peer sessions, address candidates
 ├── mesh-hardware/   CPU, memory, CUDA, and Metal discovery
 ├── mesh-model/      Provider adapters, manifests, partial downloads, cache
@@ -45,6 +46,12 @@ Not allowed:
 - CUDA or Metal types.
 - Operating-system calls.
 
+### `mesh-store`
+
+Implements [persistent state](../architecture/system/persistent-state.md).
+
+It is the only crate that executes SQL or uses platform credential stores. It owns `rusqlite`, migrations, the storage worker, model-cache metadata, and provider-token adapters. It depends on storage-neutral records from `mesh-core`.
+
 ### `mesh-net`
 
 Implements the [direct connection algorithm](../architecture/networking/direct-connection.md).
@@ -53,7 +60,8 @@ Expected dependencies:
 
 - `tokio` for the asynchronous runtime.
 - `quinn` for QUIC.
-- A selected serialization crate after the wire format is accepted.
+- `prost` for accepted control messages.
+- `rcgen`, Rustls, and SHA-256 support for accepted peer identity.
 - Router-mapping crates after evaluation.
 
 It depends on `mesh-core`. It does not depend on GPU crates.
@@ -113,6 +121,11 @@ It is the default workspace package and produces the `mesh` executable. It start
 | Native desktop GUI | egui through eframe | Accepted |
 | Async runtime | Tokio | Proposed with Quinn |
 | Direct transport | Quinn QUIC | Accepted |
+| Control serialization | Protocol Buffers through `prost` | Accepted |
+| Node certificate | Self-signed ECDSA P-256 through `rcgen` | Accepted |
+| Persistent state | SQLite through bundled `rusqlite` | Accepted |
+| Provider credentials | Native stores through Rust `keyring` adapters | Accepted |
+| Activation wire format | Fixed 128-byte header plus raw FP16 | Accepted |
 | NVIDIA discovery | NVML through a Rust wrapper | Proposed |
 | Apple discovery | Native Metal bindings | Proposed |
 | First inference engine | Candle | Accepted for proof; platform validation required |

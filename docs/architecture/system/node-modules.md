@@ -5,6 +5,7 @@
 | Status | Accepted foundation |
 | Canonical for | Modules that run inside every PC |
 | Parent | [Architecture overview](../README.md) |
+| Persistence | [Persistent state](persistent-state.md) |
 
 Every PC runs the same modules. A module owns one clear responsibility.
 
@@ -121,6 +122,8 @@ It stores:
 - Local health.
 
 **Rule:** other modules update state through explicit commands. They do not hold competing copies.
+
+Durable records are written through `mesh-store`; Node State itself remains the authoritative in-memory snapshot. Canonical contract: [Persistent state](persistent-state.md)
 
 ## M07 — Network Profiler
 
