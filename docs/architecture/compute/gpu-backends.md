@@ -30,13 +30,13 @@ Hardware Scanner
     ├── CUDA Probe  ──▶ NVIDIA device and memory report
     └── Metal Probe ──▶ Apple device and memory report
 
-GPU Worker
+Inference Worker
     └── Compute Backend
           ├── CUDA Backend
           └── Metal Backend
 ```
 
-The Hardware Scanner reports capability. The GPU Worker executes work. Do not make hardware discovery depend on loading a model framework.
+The Hardware Scanner reports capability. The Inference Worker executes a model stage. Do not make hardware discovery depend on loading a model framework.
 
 ## Proposed Rust boundary
 

@@ -15,7 +15,9 @@ crates/
 ├── mesh-core/       Stable IDs, messages, shared errors, node state
 ├── mesh-net/        Quinn endpoint, peer sessions, address candidates
 ├── mesh-hardware/   CPU, memory, CUDA, and Metal discovery
-├── mesh-compute/    GPU backend boundary; real execution comes later
+├── mesh-model/      Provider adapters, manifests, partial downloads, cache
+├── mesh-compute/    CUDA and Metal execution backends
+├── mesh-inference/  Placement, reservations, batching, pipeline control
 └── mesh-node/       Binary that starts and connects all modules
 ```
 
@@ -60,11 +62,23 @@ Implements the Hardware Scanner.
 
 It exposes platform-neutral reports from `mesh-core`. NVIDIA and Metal integrations remain private and feature-gated.
 
+### `mesh-model`
+
+Implements [provider-backed model distribution](../architecture/inference/model-distribution.md).
+
+It owns provider adapters, immutable model identity, normalized manifests, Safetensors range planning, validation, and disk caching. Provider-specific types do not leave this crate.
+
 ### `mesh-compute`
 
-Owns local compute backends. It is allowed to depend on CUDA, Metal, or model frameworks behind Cargo features.
+Owns local compute backends. It may depend on CUDA, Metal, or model frameworks behind Cargo features.
 
-It must not know how peers connect.
+It does not know how peers connect or where a stage was placed.
+
+### `mesh-inference`
+
+Implements [distributed LLM inference](../architecture/inference/README.md).
+
+It owns placement planning, local resource reservations, model preparation coordination, request batching, pipeline control, and inference failure rules. It depends on platform-neutral types from `mesh-core`.
 
 ### `mesh-node`
 
@@ -77,7 +91,7 @@ It:
 3. Creates Node State.
 4. Starts Hardware Scanner.
 5. Starts Direct Link Manager.
-6. Starts Job Manager and GPU Worker when those are implemented.
+6. Starts Job Manager, Local Resource Manager, Model Store, and Inference Worker when those phases begin.
 7. Handles clean shutdown.
 
 Business rules should live in the owning library crate, not in the binary.
@@ -92,6 +106,8 @@ Business rules should live in the owning library crate, not in the binary.
 | NVIDIA discovery | NVML through a Rust wrapper | Proposed |
 | Apple discovery | Native Metal bindings | Proposed |
 | First inference engine | Candle | Proposed |
+| First model provider | Hugging Face Hub through `hf-hub` | Proposed |
+| First partial model format | Safetensors | Accepted |
 | Training engine | Not selected | Deferred |
 
 ## Build targets

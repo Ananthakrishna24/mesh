@@ -20,13 +20,17 @@ Every PC runs the same modules. A module owns one clear responsibility.
 │ Known peers and   │ Collector         │ Active peer links  │
 │ their addresses   │ Reachable paths   │ and reconnects     │
 ├───────────────────┼───────────────────┼────────────────────┤
-│ M05 Hardware      │ M06 Node State    │ M07 Job Manager    │
-│ Scanner           │                   │                    │
-│ Local devices     │ Current local     │ Creates or accepts │
-│ and capabilities  │ state             │ jobs               │
+│ M05 Hardware      │ M06 Node State    │ M07 Network        │
+│ Scanner           │                   │ Profiler           │
+│ Local devices     │ Current local     │ Link measurements  │
+│ and capabilities  │ state             │                    │
+├───────────────────┼───────────────────┼────────────────────┤
+│ M08 Job Manager   │ M09 Local         │ M10 Model Store    │
+│                   │ Resource Manager  │                    │
+│ Job lifecycle     │ Local leases      │ Model cache        │
 ├───────────────────┴───────────────────┴────────────────────┤
-│ M08 GPU Worker                                             │
-│ Runs assigned compute on one selected local backend.       │
+│ M11 Inference Worker                                       │
+│ Loads and runs one assigned model stage.                   │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,27 +122,44 @@ It stores:
 
 **Rule:** other modules update state through explicit commands. They do not hold competing copies.
 
-## M07 — Job Manager
+## M07 — Network Profiler
 
-**Owns:** job creation and job participation.
+**Owns:** measured direct-link performance.
 
-When local software creates a job, it:
+It records directional delay, bandwidth, stability, and recent measurement time for connected peers. Measurements are bounded so they do not interfere with active inference.
 
-1. Reads peer capabilities.
-2. Selects possible workers.
-3. Splits work using the job-specific strategy.
-4. Sends work directly.
-5. Tracks progress.
-6. Combines results.
+**Rule:** placement uses measured links, not assumed internet speed.
 
-When another peer owns the job, it validates the offer and passes accepted work to the GPU Worker.
+## M08 — Job Manager
+
+**Owns:** generic job creation and participation.
+
+For an inference deployment, it creates the temporary Inference Coordinator on the job owner and routes job messages to the owning local modules.
 
 **Rule:** the creator owns only that job.
 
-## M08 — GPU Worker
+Canonical inference design: [Distributed LLM inference](../inference/README.md)
 
-**Owns:** local compute execution.
+## M09 — Local Resource Manager
 
-It selects a supported backend, reserves local resources, runs assigned work, and returns progress or a result to the Job Manager.
+**Owns:** authoritative local resource offers, expiring reservations, commits, and releases.
+
+It prevents separate job owners from assigning the same GPU memory or execution capacity.
+
+**Rule:** a remote Placement Planner may propose work. Only this local module may reserve the node's resources.
+
+## M10 — Model Store
+
+**Owns:** immutable model artifacts, partial tensor downloads, validation, disk caching, loading, and eviction.
+
+It follows a placement plan. It does not decide which layers belong on the node.
+
+Canonical distribution flow: [Provider-backed model distribution](../inference/model-distribution.md)
+
+## M11 — Inference Worker
+
+**Owns:** local model-stage execution and that stage's KV cache.
+
+It loads one assigned continuous layer range, runs CUDA or Metal operations, and sends activations to the next stage.
 
 **Rule:** CUDA and Metal remain separate native backends behind one Rust interface. Do not force both through a slower common GPU API.

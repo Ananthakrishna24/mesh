@@ -10,9 +10,9 @@
 
 Combine compute available on internet-connected PCs while keeping compute communication direct and decentralized.
 
-## Current boundary
+## Current implementation boundary
 
-The current phase builds the hardware mesh only. It must:
+The first implementation phase builds the hardware mesh. It must:
 
 1. Start the same node software on every PC.
 2. discover local hardware.
@@ -22,14 +22,13 @@ The current phase builds the hardware mesh only. It must:
 6. Share hardware capabilities and node state.
 7. Reconnect after a temporary network failure.
 
-The current phase does not implement:
+The accepted inference architecture is documented but not implemented in this phase:
 
-- LLM loading or inference.
-- Model partitioning.
-- Distributed training.
-- Gradient synchronization.
-- Tensor placement across PCs.
-- A public relay or control service.
+- [Distributed LLM inference](inference/README.md)
+- [Provider-backed partial model distribution](inference/model-distribution.md)
+- [Inference parallelism and edge cases](inference/parallelism-and-edge-cases.md)
+
+Distributed training, gradient synchronization, and a public relay or control service remain outside the accepted inference design.
 
 ## Topology
 
@@ -67,11 +66,11 @@ The Hardware Scanner reads local devices. Node State stores the result. The Node
 
 Canonical modules: [Node modules](system/node-modules.md)
 
-### Job
+### Inference job
 
-Any peer may create a job. That peer becomes the temporary owner of that job. It selects workers, sends work, tracks progress, and combines returned results.
+Any peer may create an inference deployment and become its temporary coordinator. It resolves one immutable model revision, reserves selected nodes, prepares model stages, and schedules requests.
 
-The exact inference and training job formats are deferred.
+Canonical architecture: [Distributed LLM inference](inference/README.md)
 
 ## Hard network truth
 
