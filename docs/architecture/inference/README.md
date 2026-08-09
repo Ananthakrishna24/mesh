@@ -7,12 +7,22 @@
 | Parent | [Architecture overview](../README.md) |
 | Related | [Parallelism and edge cases](parallelism-and-edge-cases.md) |
 | Related | [Provider-backed model distribution](model-distribution.md) |
+| First model family | [Qwen3 dense 4B and 8B](qwen3-model-family.md) |
 
 ## Goal
 
 Run LLM inference on one or more internet-connected PCs. Use more than one PC when it increases request throughput or when the model cannot fit on one PC.
 
 The system must not claim that several remote GPUs become one local GPU. The Inference Coordinator creates a placement plan over independent resources.
+
+## First model proofs
+
+- `Qwen/Qwen3-4B` proves complete-model inference on Windows CUDA, Linux CUDA, and macOS Metal.
+- `Qwen/Qwen3-8B` proves provider-driven partial weights and a continuous-layer pipeline across at least two PCs.
+
+Both use the same dense Qwen3 Model Family Adapter. The first correctness profile uses unquantized Safetensors, FP16 runtime weights and wire activations, a 4,096-token limit, batch size 1, and non-thinking mode.
+
+Canonical contract: [Qwen3 dense model family](qwen3-model-family.md)
 
 ## Terms
 

@@ -77,7 +77,7 @@ A Windows PC with a supported NVIDIA GPU must be usable as an inference worker. 
 
 ## Consequences
 
-- Windows CI and packaging are required from the first runnable phase.
+- Native Windows builds and manual proofs are required from the first relevant phase. Windows CI begins after the first confident Qwen3-4B CUDA implementation, before replica and distributed inference work proceeds.
 - Platform-specific modules stay behind Rust traits and Cargo target gates.
 - Windows firewall, DLL discovery, credentials, and installer behavior become planned work.
 - CUDA and model-family choices must be validated on both Windows and Linux.

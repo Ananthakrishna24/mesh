@@ -115,8 +115,9 @@ It is the default workspace package and produces the `mesh` executable. It start
 | Direct transport | Quinn QUIC | Accepted |
 | NVIDIA discovery | NVML through a Rust wrapper | Proposed |
 | Apple discovery | Native Metal bindings | Proposed |
-| First inference engine | Candle | Proposed |
-| First model provider | Hugging Face Hub through `hf-hub` | Proposed |
+| First inference engine | Candle | Accepted for proof; platform validation required |
+| First model provider | Hugging Face Hub through `hf-hub` | Accepted |
+| First model family | Dense Qwen3 4B and 8B | Accepted |
 | First partial model format | Safetensors | Accepted |
 | Training engine | Not selected | Deferred |
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted architecture; first adapter proposed |
+| Status | Accepted |
 | Date | 2026-08-09 |
 | Owners | Architecture discussion |
 
@@ -28,9 +28,11 @@ Use this acquisition order:
 4. Complete containing provider shard.
 5. Verified peer cache when implemented and measured.
 
-Use Hugging Face Hub as the first proposed provider adapter. Use Safetensors as the first format supporting tensor-level partial downloads.
+Use Hugging Face Hub as the first provider adapter. Use Safetensors as the first format supporting tensor-level partial downloads. The first provider models are `Qwen/Qwen3-4B` and `Qwen/Qwen3-8B`.
 
 Canonical architecture: [Provider-backed model distribution](../architecture/inference/model-distribution.md)
+
+First model decision: [ADR-0007](0007-qwen3-first-model-family.md)
 
 ## Synchronization decision
 

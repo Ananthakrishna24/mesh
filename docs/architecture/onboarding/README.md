@@ -234,6 +234,8 @@ It does not expose every internal module or protocol message.
 
 Public models require no provider login.
 
+The first proof models, `Qwen/Qwen3-4B` and `Qwen/Qwen3-8B`, are public. Their normal onboarding and download path does not ask for a provider token.
+
 For gated or private models, the GUI checks for an existing local provider credential. For the first Hugging Face adapter it checks the configured application store and standard Hugging Face token locations.
 
 If access is required, show:

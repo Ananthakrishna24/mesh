@@ -17,12 +17,13 @@ This folder is the project memory. Read it before changing architecture or code.
 4. [Desktop onboarding](architecture/onboarding/README.md)
 5. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
 6. [Distributed LLM inference](architecture/inference/README.md)
-7. [Provider-backed model distribution](architecture/inference/model-distribution.md)
-8. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
-9. [GPU backends](architecture/compute/gpu-backends.md)
-10. [Architecture and implementation roadmap](implementation/roadmap.md)
-11. [Rust workspace plan](implementation/rust-workspace.md)
-12. [Architecture decisions](decisions/)
+7. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
+8. [Provider-backed model distribution](architecture/inference/model-distribution.md)
+9. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
+10. [GPU backends](architecture/compute/gpu-backends.md)
+11. [Architecture and implementation roadmap](implementation/roadmap.md)
+12. [Rust workspace plan](implementation/rust-workspace.md)
+13. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -34,6 +35,7 @@ This folder is the project memory. Read it before changing architecture or code.
 | How does a user start and enroll a PC? | [Desktop onboarding](architecture/onboarding/README.md) |
 | What exactly is shared during enrollment? | [Enrollment contract](architecture/onboarding/enrollment-contract.md) |
 | How is an LLM placed and run? | [Distributed LLM inference](architecture/inference/README.md) |
+| Which models are the first proofs? | [Qwen3 model family](architecture/inference/qwen3-model-family.md) |
 | How are partial model weights downloaded and synchronized? | [Provider-backed model distribution](architecture/inference/model-distribution.md) |
 | Which inference work can run in parallel? | [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md) |
 | Why QUIC and Quinn? | [ADR-0001](decisions/0001-direct-quic-transport.md) |
@@ -55,6 +57,7 @@ Do not copy a rule into several documents. Update the canonical document and lin
 - NVIDIA CUDA on Windows and Linux and Apple Metal on macOS are required first-class GPU targets.
 - LLM inference architecture is accepted but not implemented. Distributed training remains deferred.
 - The primary product is one native desktop application with guided onboarding; separate commands are not required for normal use.
+- Qwen3-4B is the first complete-model proof; Qwen3-8B is the first distributed layer-pipeline proof.
 
 ## Agent rules
 

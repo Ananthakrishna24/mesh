@@ -77,7 +77,7 @@ On Windows, discovery must load NVML through the installed NVIDIA driver, report
 
 ### Compute
 
-**Proposed first framework:** Hugging Face Candle with its `cuda` feature.
+**First proof framework:** Hugging Face Candle with its `cuda` feature.
 
 Candle provides Rust tensors and a CUDA device through the same model API used by its Metal backend. This reduces initial model integration work.
 
@@ -97,7 +97,7 @@ Metal is available only on Apple platforms. The Metal crate and code must be beh
 
 ### Compute
 
-**Proposed first framework:** Hugging Face Candle with its `metal` feature.
+**First proof framework:** Hugging Face Candle with its `metal` feature.
 
 Candle documents separate `cuda` and `metal` features and can construct tensors on those devices. This makes it a strong first inference candidate across the two accepted GPU targets.
 

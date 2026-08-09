@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted architecture; Hugging Face adapter proposed first |
+| Status | Accepted architecture; Hugging Face is the accepted first adapter |
 | Canonical for | Resolving, partitioning, downloading, caching, and synchronizing model weights |
 | Parent | [Distributed LLM inference](README.md) |
 | Decision | [ADR-0004: immutable provider-backed model distribution](../../decisions/0004-provider-backed-model-distribution.md) |
@@ -115,7 +115,7 @@ The manifest hash is part of every placement and readiness message.
 
 ## First provider
 
-Use a Hugging Face Hub adapter first.
+Use a Hugging Face Hub adapter first. The initial public references are `Qwen/Qwen3-4B` and `Qwen/Qwen3-8B`; every deployment pins an immutable revision before placement.
 
 The Rust `hf-hub` client supports:
 
@@ -129,6 +129,9 @@ The Rust `hf-hub` client supports:
 Use the high-level client for metadata, complete files, and normal cache integration. Use an explicit HTTP range path only for tensor ranges after the immutable revision and artifact metadata are resolved.
 
 The provider abstraction must not expose Hugging Face types to inference planning.
+
+
+First model mapping: [Qwen3 dense model family](qwen3-model-family.md)
 
 ## Partial weight strategies
 

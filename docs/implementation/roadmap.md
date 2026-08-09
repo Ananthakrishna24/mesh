@@ -18,34 +18,43 @@ Accepted areas:
 - Local resource reservations.
 - Single-node, replica, and layer-pipeline inference modes.
 - Provider-backed partial model distribution.
+- Dense Qwen3-4B complete-model proof and Qwen3-8B distributed proof.
 - Required native NVIDIA CUDA support on Windows and Linux and Apple Metal support on macOS.
 
 ## Remaining architecture decisions
 
 Resolve these before their implementation phase begins.
 
-### A01 — First Model Family Adapter
+### A01 — Qwen3 dense Model Family Adapter
 
-Select one dense decoder model family. The adapter must:
+The accepted family is dense Qwen3:
 
-- Identify the architecture from provider configuration.
+- `Qwen/Qwen3-4B` for complete-model and backend proofs.
+- `Qwen/Qwen3-8B` for distributed layer-pipeline proof.
+
+The adapter must:
+
+- Identify Qwen3 from provider configuration.
 - Map tensor names to layer ownership.
 - Calculate per-layer memory.
 - Build only an assigned continuous layer range.
 - Handle embedding, final normalization, output head, and tied weights.
 - Validate native Windows CUDA, Linux CUDA, and macOS Metal operation support.
 
-Recommended first direction: a small dense Llama-compatible model for correctness, followed by a larger model using the same adapter.
+Canonical contract: [Qwen3 dense model family](../architecture/inference/qwen3-model-family.md)
 
-### A02 — First weight format and quantization
+### A02 — Runtime precision and later quantization
 
-Select:
+The first correctness profile uses:
 
-- FP16 correctness baseline.
-- One later 4-bit format for large-model capacity.
-- Exact Windows CUDA, Linux CUDA, and Metal support requirements.
+- Upstream unquantized Safetensors.
+- FP16 runtime weights across the three required backends.
+- FP16 wire activations.
+- A 4,096-token context limit.
+- Batch size 1.
+- Non-thinking mode.
 
-Do not begin with several quantization formats.
+After the unquantized Qwen3-8B pipeline works, select exactly one 4-bit format. Do not begin with several quantization formats.
 
 ### A03 — Protocol serialization and versioning
 
@@ -196,23 +205,31 @@ Build:
 
 Proof:
 
-> Selected Windows, Linux, and macOS nodes automatically download different verified tensor assignments for one immutable model revision.
+> Selected Windows, Linux, and macOS nodes automatically download different verified Qwen3-8B tensor assignments for one immutable revision.
 
 ### P07 — Single-node inference
 
 Build:
 
-- First Model Family Adapter.
+- Dense Qwen3 Model Family Adapter.
+- Complete `Qwen/Qwen3-4B` stage.
 - Candle CUDA stage validated natively on Windows and Linux.
 - Candle Metal stage validated on macOS Apple Silicon.
-- Tokenizer.
-- KV cache.
-- Sampling.
+- Qwen3 tokenizer and non-thinking chat template.
+- Qwen3 KV cache and seeded sampling.
 - Streaming token output in the GUI.
 
 Proof:
 
-> The same accepted model produces valid streamed output on Windows CUDA, Linux CUDA, and macOS Metal.
+> The pinned Qwen3-4B model produces valid streamed output on Windows CUDA, Linux CUDA, and macOS Metal under the accepted correctness profile.
+
+### P07.5 — Windows confidence and CI gate
+
+Manually prove native Windows GUI, enrollment, model download, Qwen3-4B CUDA load, warm-up, and generation first.
+
+After that implementation is stable enough to trust the build shape, add Windows CI for the cross-platform crates and native application. Add a CUDA build or GPU execution lane when an appropriate Windows runner is available.
+
+Windows remains required before this gate. CI timing does not make the target optional.
 
 ### P08 — Replica inference
 
@@ -226,7 +243,7 @@ Build:
 
 Proof:
 
-> Independent requests run concurrently on separate complete-model nodes.
+> Independent Qwen3-4B requests run concurrently on separate complete-model nodes.
 
 ### P09 — Layer pipeline inference
 
@@ -242,7 +259,7 @@ Build:
 
 Proof:
 
-> A model that does not fit on one selected GPU runs across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
+> The pinned Qwen3-8B model runs as continuous layer stages across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
 
 ### P10 — Failure and restart behavior
 
@@ -262,12 +279,13 @@ Proof:
 
 Measure against one-node baselines:
 
-- Replica throughput.
-- Two-stage and three-stage token delay.
-- Prompt-processing bandwidth.
+- Qwen3-4B single-node latency and throughput on every required backend.
+- Qwen3-4B replica throughput.
+- Qwen3-8B two-stage and three-stage token delay.
+- Qwen3-8B prompt-processing bandwidth.
 - Windows-CUDA-to-Linux-CUDA, CUDA-to-Metal, and same-platform paths.
-- Quantization memory and speed.
-- Model download and warm-up time.
+- Later quantization memory and speed.
+- Model download, partial extraction, load, and warm-up time.
 
 Only measured bottlenecks justify advanced optimization.
 
@@ -286,4 +304,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Select the first model family, model size, and correctness format. This fixes the first Model Family Adapter, tensor mapping, KV-cache shape, required native Windows CUDA, Linux CUDA, and macOS Metal operations, and the end-to-end inference proof.
+Define protocol serialization, identity, invitation encoding, activation framing, tokenizer, sampling, and KV-cache wire contracts. The first model family and model sizes are now accepted.
