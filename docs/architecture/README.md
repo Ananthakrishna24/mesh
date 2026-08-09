@@ -22,8 +22,10 @@ The first implementation phase builds the hardware mesh. It must:
 6. Share hardware capabilities and node state.
 7. Reconnect after a temporary network failure.
 
-The accepted inference architecture is documented but not implemented in this phase:
+The accepted desktop onboarding and inference architecture are documented but not implemented in this phase:
 
+- [Desktop onboarding](onboarding/README.md)
+- [Enrollment contract](onboarding/enrollment-contract.md)
 - [Distributed LLM inference](inference/README.md)
 - [Provider-backed partial model distribution](inference/model-distribution.md)
 - [Inference parallelism and edge cases](inference/parallelism-and-edge-cases.md)
@@ -53,6 +55,12 @@ Distributed training, gradient synchronization, and a public relay or control se
 Every node is equal at the mesh level. A full mesh is acceptable for the first small deployment. A later decision must set the size where full-mesh connections stop being practical.
 
 ## Main flows
+
+### First launch
+
+One native Rust application starts the GUI and node runtime. It guides the user through creating a mesh or enrolling this PC with one invitation.
+
+Canonical experience: [Desktop onboarding](onboarding/README.md)
 
 ### Join
 

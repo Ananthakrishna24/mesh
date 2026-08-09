@@ -28,10 +28,10 @@ Every PC runs the same modules. A module owns one clear responsibility.
 │ M08 Job Manager   │ M09 Local         │ M10 Model Store    │
 │                   │ Resource Manager  │                    │
 │ Job lifecycle     │ Local leases      │ Model cache        │
-├───────────────────┴───────────────────┴────────────────────┤
-│ M11 Inference Worker                                       │
-│ Loads and runs one assigned model stage.                   │
-└────────────────────────────────────────────────────────────┘
+├─────────────────────────────┬──────────────────────────────┤
+│ M11 Inference Worker        │ M12 Desktop Application      │
+│ Assigned model stage        │ Guided user interface        │
+└─────────────────────────────┴──────────────────────────────┘
 ```
 
 ## M01 — Node Connector
@@ -163,3 +163,13 @@ Canonical distribution flow: [Provider-backed model distribution](../inference/m
 It loads one assigned continuous layer range, runs CUDA or Metal operations, and sends activations to the next stage.
 
 **Rule:** CUDA and Metal remain separate native backends behind one Rust interface. Do not force both through a slower common GPU API.
+
+## M12 — Desktop Application
+
+**Owns:** first-run guidance, enrollment interaction, progress, and the small mesh dashboard.
+
+It sends typed commands to the node runtime and renders state snapshots. It does not implement networking, hardware, model, or inference rules.
+
+**Rule:** normal onboarding requires one running application and no separate commands.
+
+Canonical experience: [Desktop onboarding](../onboarding/README.md)

@@ -89,7 +89,7 @@ struct JoinInvite {
 }
 ```
 
-The human-readable encoding is deferred. It may become a file, command argument, or `mesh://` URI.
+The exact encoding is deferred. The desktop application wraps the same payload as pasted text, a `.mesh-invite` file, or a `mesh://` URI. Canonical user flow: [Enrollment contract](../onboarding/enrollment-contract.md).
 
 ## D. Join through the inviter
 

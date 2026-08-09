@@ -11,6 +11,8 @@ No Rust workspace exists yet. This document defines the intended boundary before
 ## Workspace shape
 
 ```text
+apps/
+└── mesh-app/        Default eframe desktop package; binary name `mesh`
 crates/
 ├── mesh-core/       Stable IDs, messages, shared errors, node state
 ├── mesh-net/        Quinn endpoint, peer sessions, address candidates
@@ -18,7 +20,7 @@ crates/
 ├── mesh-model/      Provider adapters, manifests, partial downloads, cache
 ├── mesh-compute/    CUDA and Metal execution backends
 ├── mesh-inference/  Placement, reservations, batching, pipeline control
-└── mesh-node/       Binary that starts and connects all modules
+└── mesh-node/       Node runtime composition and lifecycle library
 ```
 
 Use a Cargo workspace at the repository root.
@@ -82,7 +84,7 @@ It owns placement planning, local resource reservations, model preparation coord
 
 ### `mesh-node`
 
-Composition root only.
+Composes the node runtime as a library.
 
 It:
 
@@ -92,15 +94,23 @@ It:
 4. Starts Hardware Scanner.
 5. Starts Direct Link Manager.
 6. Starts Job Manager, Local Resource Manager, Model Store, and Inference Worker when those phases begin.
-7. Handles clean shutdown.
+7. Publishes typed state snapshots and progress events.
+8. Handles graceful shutdown.
 
-Business rules should live in the owning library crate, not in the binary.
+Business rules stay in the owning library crate. The GUI drives this runtime through typed commands.
+
+### `mesh-app`
+
+Implements [desktop onboarding](../architecture/onboarding/README.md) with `eframe`.
+
+It is the default workspace package and produces the `mesh` executable. It starts the Tokio node runtime, sends UI commands, and renders state snapshots. It does not contain networking, model, or inference rules.
 
 ## Accepted base stack
 
 | Need | Choice | State |
 |---|---|---|
 | Language | Rust stable | Accepted |
+| Native desktop GUI | egui through eframe | Accepted |
 | Async runtime | Tokio | Proposed with Quinn |
 | Direct transport | Quinn QUIC | Accepted |
 | NVIDIA discovery | NVML through a Rust wrapper | Proposed |
@@ -123,12 +133,15 @@ Windows CUDA support may be added, but it is not accepted as a first implementat
 
 The first runnable slice should do only this:
 
-1. Start two `mesh-node` processes.
-2. Bind a Quinn endpoint in each process.
-3. Connect using a manually supplied invite.
-4. Complete `HELLO` and `WELCOME`.
-5. Exchange static test hardware reports.
-6. Disconnect one process.
-7. Restart it and reconnect.
+1. Run `cargo run --release` and open the native first-run window.
+2. Create a mesh on the first PC through the GUI.
+3. Generate an invitation with **Add another PC**.
+4. Start the same application on a second PC.
+5. Enroll the second PC by pasting or opening the invitation.
+6. Bind a Quinn endpoint in each process.
+7. Complete `HELLO` and `WELCOME`.
+8. Exchange static test hardware reports.
+9. Close and restart one application.
+10. Reconnect automatically and open the dashboard.
 
-Real hardware probes should follow after the direct connection is proven.
+No CLI arguments or separate helper processes are required. Real hardware probes should follow after this path works.

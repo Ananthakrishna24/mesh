@@ -14,12 +14,15 @@ This folder is the project memory. Read it before changing architecture or code.
 1. [Architecture overview](architecture/README.md)
 2. [Node modules](architecture/system/node-modules.md)
 3. [Direct connection algorithm](architecture/networking/direct-connection.md)
-4. [Distributed LLM inference](architecture/inference/README.md)
-5. [Provider-backed model distribution](architecture/inference/model-distribution.md)
-6. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
-7. [GPU backends](architecture/compute/gpu-backends.md)
-8. [Rust workspace plan](implementation/rust-workspace.md)
-9. [Architecture decisions](decisions/)
+4. [Desktop onboarding](architecture/onboarding/README.md)
+5. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
+6. [Distributed LLM inference](architecture/inference/README.md)
+7. [Provider-backed model distribution](architecture/inference/model-distribution.md)
+8. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
+9. [GPU backends](architecture/compute/gpu-backends.md)
+10. [Architecture and implementation roadmap](implementation/roadmap.md)
+11. [Rust workspace plan](implementation/rust-workspace.md)
+12. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -28,12 +31,15 @@ This folder is the project memory. Read it before changing architecture or code.
 | What are we building now? | [Architecture overview](architecture/README.md) |
 | What runs inside each PC? | [Node modules](architecture/system/node-modules.md) |
 | How do two PCs connect? | [Direct connection algorithm](architecture/networking/direct-connection.md) |
+| How does a user start and enroll a PC? | [Desktop onboarding](architecture/onboarding/README.md) |
+| What exactly is shared during enrollment? | [Enrollment contract](architecture/onboarding/enrollment-contract.md) |
 | How is an LLM placed and run? | [Distributed LLM inference](architecture/inference/README.md) |
 | How are partial model weights downloaded and synchronized? | [Provider-backed model distribution](architecture/inference/model-distribution.md) |
 | Which inference work can run in parallel? | [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md) |
 | Why QUIC and Quinn? | [ADR-0001](decisions/0001-direct-quic-transport.md) |
 | How do NVIDIA and Metal fit? | [GPU backends](architecture/compute/gpu-backends.md) |
 | How should the Rust repository be split? | [Rust workspace plan](implementation/rust-workspace.md) |
+| What remains to be decided and built? | [Architecture and implementation roadmap](implementation/roadmap.md) |
 
 Do not copy a rule into several documents. Update the canonical document and link to it.
 
@@ -47,6 +53,7 @@ Do not copy a rule into several documents. Update the canonical document and lin
 - Rust is the implementation language.
 - NVIDIA CUDA and Apple Metal are the first GPU targets.
 - LLM inference architecture is accepted but not implemented. Distributed training remains deferred.
+- The primary product is one native desktop application with guided onboarding; separate commands are not required for normal use.
 
 ## Agent rules
 
