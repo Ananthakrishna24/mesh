@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Hardware Mesh peer-to-peer architecture document.">
+  <title>Hardware Mesh / Architecture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f3ef;
+      --panel: #ffffff;
+      --panel-2: #e9e9e3;
+      --ink: #111111;
+      --muted: #5e5e58;
+      --line: #111111;
+      --soft-line: #b8b8b0;
+      --accent: #0057ff;
+      --accent-ink: #ffffff;
+      --warn: #fff2a8;
+      --ok: #d7ffb8;
+      --code: #ecece6;
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #111111;
+      --panel: #171717;
+      --panel-2: #202020;
+      --ink: #f1f1e9;
+      --muted: #a4a49b;
+      --line: #f1f1e9;
+      --soft-line: #454540;
+      --accent: #70ffb1;
+      --accent-ink: #08150e;
+      --warn: #4a3f00;
+      --ok: #183d27;
+      --code: #242424;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.55 Arial, Helvetica, sans-serif;
+    }
+
+    button, code, .mono, .tag, .section-id, .diagram-label {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    a { color: inherit; }
+    button { color: inherit; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 48px;
+      display: flex;
+      align-items: stretch;
+      border-bottom: 2px solid var(--line);
+      background: var(--bg);
+    }
+
+    .project-name {
+      display: flex;
+      align-items: center;
+      width: 260px;
+      padding: 0 16px;
+      border-right: 2px solid var(--line);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+    }
+
+    .doc-path {
+      display: flex;
+      flex: 1;
+      align-items: center;
+      padding: 0 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .theme-toggle {
+      min-width: 128px;
+      border: 0;
+      border-left: 2px solid var(--line);
+      background: transparent;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .theme-toggle:hover,
+    .theme-toggle:focus-visible {
+      background: var(--accent);
+      color: var(--accent-ink);
+      outline: 0;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: calc(100vh - 48px);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 48px;
+      height: calc(100vh - 48px);
+      padding: 24px 16px;
+      border-right: 2px solid var(--line);
+      overflow-y: auto;
+    }
+
+    .sidebar-label {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font: 10px/1.2 "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .sidebar nav { margin-bottom: 30px; }
+    .sidebar nav a {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      padding: 7px 4px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .sidebar nav a:hover { color: var(--ink); }
+    .sidebar nav a span:first-child { font-family: monospace; }
+
+    .status-block {
+      padding: 12px;
+      border: 1px solid var(--soft-line);
+      background: var(--panel);
+      font-size: 11px;
+    }
+    .status-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
+    .status-row span:first-child { color: var(--muted); }
+    .status-value { font-weight: 700; }
+
+    .document {
+      width: min(1280px, 100%);
+      min-width: 0;
+      padding: 48px clamp(24px, 5vw, 76px) 100px;
+    }
+
+    .document-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 48px;
+      padding-bottom: 36px;
+      border-bottom: 2px solid var(--line);
+    }
+
+    .tag {
+      display: inline-block;
+      margin-bottom: 16px;
+      padding: 4px 7px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 760px;
+      margin-bottom: 18px;
+      font-size: clamp(36px, 6vw, 68px);
+      line-height: 0.96;
+      letter-spacing: -0.055em;
+    }
+    .lead { max-width: 720px; margin: 0; color: var(--muted); font-size: 17px; }
+
+    .decision-summary {
+      align-self: end;
+      padding: 16px;
+      border: 2px solid var(--line);
+      background: var(--panel);
+    }
+    .decision-summary strong { display: block; margin-bottom: 8px; font-size: 13px; text-transform: uppercase; }
+    .decision-summary p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    section {
+      padding-top: 72px;
+      scroll-margin-top: 66px;
+    }
+
+    .section-heading {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 680px);
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+    .section-id { color: var(--accent); font-size: 11px; font-weight: 800; }
+    h2 { margin-bottom: 8px; font-size: clamp(25px, 4vw, 38px); line-height: 1; letter-spacing: -0.04em; }
+    .section-heading p { margin: 0; color: var(--muted); }
+
+    .architecture-canvas {
+      position: relative;
+      min-height: 620px;
+      border: 2px solid var(--line);
+      background-color: var(--panel);
+      background-image:
+        linear-gradient(var(--soft-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--soft-line) 1px, transparent 1px);
+      background-size: 24px 24px;
+      overflow: hidden;
+    }
+
+    .canvas-title {
+      position: absolute;
+      z-index: 5;
+      top: 0;
+      left: 0;
+      padding: 7px 10px;
+      border-right: 2px solid var(--line);
+      border-bottom: 2px solid var(--line);
+      background: var(--bg);
+      font: 10px/1.2 monospace;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .canvas-note {
+      position: absolute;
+      z-index: 5;
+      right: 12px;
+      bottom: 12px;
+      max-width: 280px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--muted);
+      font: 10px/1.45 monospace;
+    }
+
+    .peer-box {
+      position: absolute;
+      z-index: 3;
+      width: 170px;
+      min-height: 78px;
+      padding: 12px;
+      border: 2px solid var(--line);
+      background: var(--bg);
+    }
+    .peer-box h3 { margin: 0 0 5px; font: 800 13px/1.2 monospace; text-transform: uppercase; }
+    .peer-box p { margin: 0; color: var(--muted); font-size: 10px; }
+    .peer-a { top: 78px; left: 50%; transform: translateX(-50%); }
+    .peer-b { right: 7%; bottom: 76px; }
+    .peer-c { left: 7%; bottom: 76px; }
+
+    .expanded-node {
+      position: absolute;
+      z-index: 4;
+      top: 218px;
+      left: 50%;
+      width: min(620px, 68%);
+      min-height: 260px;
+      padding: 44px 18px 18px;
+      transform: translateX(-50%);
+      border: 3px solid var(--accent);
+      background: var(--panel);
+    }
+    .expanded-node > .diagram-label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      padding: 8px 10px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .module-box {
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+    }
+    .module-box.central { grid-column: 1 / -1; min-height: 60px; border-width: 2px; }
+    .module-box strong { display: block; margin-bottom: 5px; font: 800 10px/1.3 monospace; text-transform: uppercase; }
+    .module-box span { display: block; color: var(--muted); font-size: 10px; line-height: 1.35; }
+
+    .connections {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .connections line,
+    .connections path {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+    .connections .secondary { stroke: var(--line); stroke-dasharray: 6 6; }
+    .connections text { fill: var(--ink); font: 9px monospace; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
+
+    .module-list { border-top: 2px solid var(--line); }
+    .module-row {
+      display: grid;
+      grid-template-columns: 54px 210px minmax(180px, 1.25fr) minmax(160px, 0.8fr);
+      border-right: 2px solid var(--line);
+      border-bottom: 2px solid var(--line);
+      border-left: 2px solid var(--line);
+      background: var(--panel);
+    }
+    .module-row > * { padding: 16px; border-right: 1px solid var(--soft-line); }
+    .module-row > *:last-child { border-right: 0; }
+    .module-row.header { background: var(--ink); color: var(--bg); font: 800 9px/1.2 monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+    .module-row.header > * { padding-block: 10px; border-color: color-mix(in srgb, var(--bg) 30%, transparent); }
+    .module-no { color: var(--accent); font: 800 11px/1.3 monospace; }
+    .module-name strong { display: block; margin-bottom: 4px; font-size: 13px; }
+    .module-name code { color: var(--muted); font-size: 10px; }
+    .module-copy, .module-rule { color: var(--muted); font-size: 12px; }
+    .module-rule b { color: var(--ink); }
+
+    .flow-canvas {
+      display: grid;
+      grid-template-columns: repeat(7, auto);
+      align-items: stretch;
+      border: 2px solid var(--line);
+      background: var(--panel);
+      overflow-x: auto;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .flow-step {
+      min-width: 145px;
+      padding: 18px;
+      background: var(--panel);
+    }
+    .flow-step b { display: block; margin-bottom: 9px; font: 800 10px/1.3 monospace; text-transform: uppercase; }
+    .flow-step p { margin: 0; color: var(--muted); font-size: 11px; }
+    .flow-arrow {
+      display: grid;
+      min-width: 42px;
+      place-items: center;
+      border-right: 1px solid var(--soft-line);
+      border-left: 1px solid var(--soft-line);
+      color: var(--accent);
+      font: 800 18px monospace;
+    }
+
+    .network-limit {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 2px solid var(--line);
+    }
+    .limit-side { padding: 24px; background: var(--panel); }
+    .limit-side:first-child { border-right: 2px solid var(--line); }
+    .limit-side h3 { font-size: 17px; }
+    .limit-side p { color: var(--muted); font-size: 12px; }
+    .attempt-list { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: methods; }
+    .attempt-list li {
+      display: grid;
+      grid-template-columns: 30px 1fr;
+      gap: 8px;
+      padding: 9px 0;
+      border-top: 1px solid var(--soft-line);
+      counter-increment: methods;
+      font-size: 12px;
+    }
+    .attempt-list li::before { content: counter(methods, decimal-leading-zero); color: var(--accent); font: 800 10px/1.8 monospace; }
+    .limit-warning { padding: 14px; border: 1px solid var(--line); background: var(--warn); color: var(--ink); font-size: 12px; font-weight: 700; }
+
+    .job-diagram {
+      display: grid;
+      grid-template-columns: 180px 50px minmax(320px, 1fr) 50px 180px;
+      align-items: center;
+      padding: 28px;
+      border: 2px solid var(--line);
+      background: var(--panel);
+      overflow-x: auto;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .job-node { min-width: 160px; padding: 16px; border: 2px solid var(--line); background: var(--bg); text-align: center; }
+    .job-node.owner { border-color: var(--accent); }
+    .job-node b { display: block; font: 800 11px/1.3 monospace; text-transform: uppercase; }
+    .job-node span { color: var(--muted); font-size: 10px; }
+    .job-workers { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 8px; }
+    .job-worker { padding: 14px 8px; border: 1px solid var(--line); background: var(--panel-2); text-align: center; font: 700 10px/1.5 monospace; }
+    .job-arrow { color: var(--accent); text-align: center; font: 800 20px monospace; }
+
+    .decision-log { border-top: 2px solid var(--line); }
+    .decision-row {
+      display: grid;
+      grid-template-columns: 120px 140px 1fr;
+      border-right: 2px solid var(--line);
+      border-bottom: 2px solid var(--line);
+      border-left: 2px solid var(--line);
+      background: var(--panel);
+    }
+    .decision-row > * { padding: 14px; border-right: 1px solid var(--soft-line); }
+    .decision-row > *:last-child { border-right: 0; }
+    .decision-state { color: var(--accent); font: 800 10px/1.5 monospace; text-transform: uppercase; }
+    .decision-topic { font-weight: 700; font-size: 12px; }
+    .decision-text { color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .project-name { width: auto; }
+      .document { padding-inline: 22px; }
+      .module-row { grid-template-columns: 44px 170px 1fr; }
+      .module-rule { grid-column: 2 / -1; border-top: 1px solid var(--soft-line); }
+      .module-row.header > :last-child { display: none; }
+      .expanded-node { width: 76%; }
+    }
+
+    @media (max-width: 700px) {
+      .doc-path { display: none; }
+      .theme-toggle { margin-left: auto; }
+      .document-header { grid-template-columns: 1fr; gap: 24px; }
+      .section-heading { grid-template-columns: 1fr; gap: 8px; }
+      section { min-width: 0; }
+      .architecture-canvas { min-height: 830px; }
+      .peer-a { top: 60px; }
+      .peer-b { right: 18px; bottom: 60px; }
+      .peer-c { left: 18px; bottom: 60px; }
+      .expanded-node { top: 175px; width: calc(100% - 36px); }
+      .module-grid { grid-template-columns: 1fr 1fr; }
+      .module-box.central { grid-column: 1 / -1; }
+      .connections { display: none; }
+      .module-row { grid-template-columns: 40px 1fr; }
+      .module-copy, .module-rule { grid-column: 1 / -1; border-top: 1px solid var(--soft-line); }
+      .module-row.header { display: none; }
+      .network-limit { grid-template-columns: 1fr; }
+      .limit-side:first-child { border-right: 0; border-bottom: 2px solid var(--line); }
+      .decision-row { grid-template-columns: 90px 1fr; }
+      .decision-text { grid-column: 1 / -1; border-top: 1px solid var(--soft-line); }
+    }
+
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="project-name">Hardware Mesh</div>
+    <div class="doc-path mono">docs / architecture / network-foundation</div>
+    <button class="theme-toggle" type="button" aria-label="Switch color theme">Light mode</button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-label">Contents</p>
+      <nav>
+        <a href="#system"><span>01</span><span>System map</span></a>
+        <a href="#modules"><span>02</span><span>Node modules</span></a>
+        <a href="#join"><span>03</span><span>Join flow</span></a>
+        <a href="#internet"><span>04</span><span>Internet links</span></a>
+        <a href="#jobs"><span>05</span><span>Job ownership</span></a>
+        <a href="#decisions"><span>06</span><span>Decisions</span></a>
+      </nav>
+
+      <p class="sidebar-label">Document state</p>
+      <div class="status-block">
+        <div class="status-row"><span>Stage</span><span class="status-value">01</span></div>
+        <div class="status-row"><span>Scope</span><span class="status-value">Hardware mesh</span></div>
+        <div class="status-row"><span>Topology</span><span class="status-value">P2P</span></div>
+        <div class="status-row"><span>Status</span><span class="status-value">Discussing</span></div>
+      </div>
+    </aside>
+
+    <main class="document">
+      <header class="document-header">
+        <div>
+          <span class="tag">Architecture 01</span>
+          <h1>Decentralized node foundation</h1>
+          <p class="lead">PCs in different locations communicate directly. Every PC runs the same modules. There is no gateway, relay, or permanent controller.</p>
+        </div>
+        <aside class="decision-summary">
+          <strong>Current boundary</strong>
+          <p>This step covers node discovery, direct connections, hardware reporting, and temporary job ownership. LLM inference and model training come later.</p>
+        </aside>
+      </header>
+
+      <section id="system">
+        <div class="section-heading">
+          <span class="section-id">01 — MAP</span>
+          <div><h2>System architecture</h2><p>Three equal peers. PC A is expanded to show the modules that exist inside every PC.</p></div>
+        </div>
+
+        <div class="architecture-canvas" aria-label="Peer-to-peer hardware mesh architecture">
+          <div class="canvas-title">Direct internet mesh</div>
+          <svg class="connections" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">
+            <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/></marker></defs>
+            <line x1="500" y1="155" x2="205" y2="500" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+            <line x1="500" y1="155" x2="795" y2="500" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+            <line x1="205" y1="500" x2="795" y2="500" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+            <line class="secondary" x1="500" y1="155" x2="500" y2="218"/>
+            <text x="275" y="275">DIRECT LINK</text>
+            <text x="665" y="275">DIRECT LINK</text>
+            <text x="456" y="528">DIRECT LINK</text>
+          </svg>
+
+          <article class="peer-box peer-a"><h3>PC A / Peer</h3><p>Known contact. Equal to every other peer.</p></article>
+          <article class="peer-box peer-b"><h3>PC B / Peer</h3><p>Runs the same node modules.</p></article>
+          <article class="peer-box peer-c"><h3>PC C / Peer</h3><p>Runs the same node modules.</p></article>
+
+          <div class="expanded-node">
+            <span class="diagram-label">Modules inside every peer</span>
+            <div class="module-grid">
+              <div class="module-box central"><strong>Node Connector</strong><span>Starts the node and routes messages between the modules.</span></div>
+              <div class="module-box"><strong>Peer Store</strong><span>Remembers known PCs and their latest addresses.</span></div>
+              <div class="module-box"><strong>Direct Link Manager</strong><span>Creates and keeps direct internet connections.</span></div>
+              <div class="module-box"><strong>Hardware Scanner</strong><span>Reads GPU, CPU, memory, and network details.</span></div>
+              <div class="module-box"><strong>Job Manager</strong><span>Creates jobs or accepts work from another PC.</span></div>
+              <div class="module-box"><strong>GPU Worker</strong><span>Runs the assigned calculation on local hardware.</span></div>
+              <div class="module-box"><strong>Node State</strong><span>Holds current health, hardware, jobs, and links.</span></div>
+            </div>
+          </div>
+          <div class="canvas-note">Solid arrows are direct, two-way internet connections. There is no shared server in the middle.</div>
+        </div>
+      </section>
+
+      <section id="modules">
+        <div class="section-heading">
+          <span class="section-id">02 — MOD</span>
+          <div><h2>Module responsibilities</h2><p>Each module owns one clear part of the node. This list will grow as the architecture grows.</p></div>
+        </div>
+
+        <div class="module-list">
+          <div class="module-row header"><div>ID</div><div>Module</div><div>What it does</div><div>Important rule</div></div>
+          <article class="module-row"><div class="module-no">M01</div><div class="module-name"><strong>Node Connector</strong><code>node_connector</code></div><div class="module-copy">Starts all node modules. Receives messages from direct links. Sends each message to the correct module.</div><div class="module-rule"><b>It is not a master.</b> Every PC runs its own connector.</div></article>
+          <article class="module-row"><div class="module-no">M02</div><div class="module-name"><strong>Peer Store</strong><code>peer_store</code></div><div class="module-copy">Stores the mesh ID, known peer IDs, last known addresses, and current connection state.</div><div class="module-rule">A peer learned from any trusted peer is added to the local list.</div></article>
+          <article class="module-row"><div class="module-no">M03</div><div class="module-name"><strong>Direct Link Manager</strong><code>direct_link_manager</code></div><div class="module-copy">Tries IPv6, IPv4, automatic port opening, and hole punching. Keeps working connections alive.</div><div class="module-rule">No relay is used. A blocked peer is reported as unavailable.</div></article>
+          <article class="module-row"><div class="module-no">M04</div><div class="module-name"><strong>Hardware Scanner</strong><code>hardware_scanner</code></div><div class="module-copy">Reads GPU type, GPU memory, CPU, system memory, and basic network information.</div><div class="module-rule">Hardware data is refreshed when the node starts or its hardware changes.</div></article>
+          <article class="module-row"><div class="module-no">M05</div><div class="module-name"><strong>Node State</strong><code>node_state</code></div><div class="module-copy">Keeps the node's current hardware, peer links, active jobs, and local health in one local state.</div><div class="module-rule">Each PC owns its state. There is no central copy.</div></article>
+          <article class="module-row"><div class="module-no">M06</div><div class="module-name"><strong>Job Manager</strong><code>job_manager</code></div><div class="module-copy">Creates a job, selects peers, splits the work, tracks progress, and combines returned results.</div><div class="module-rule">The creator owns only that job. It does not control the mesh.</div></article>
+          <article class="module-row"><div class="module-no">M07</div><div class="module-name"><strong>GPU Worker</strong><code>gpu_worker</code></div><div class="module-copy">Accepts one work part from the Job Manager and runs it on the local GPU.</div><div class="module-rule">It reports progress and returns the result to the job owner.</div></article>
+        </div>
+      </section>
+
+      <section id="join">
+        <div class="section-heading">
+          <span class="section-id">03 — JOIN</span>
+          <div><h2>Join flow</h2><p>A new PC needs one known PC. The known PC is only the first contact.</p></div>
+        </div>
+
+        <div class="flow-canvas" aria-label="New peer joining the mesh">
+          <div class="flow-step"><b>PC A</b><p>Creates an invite with its address and mesh ID.</p></div><div class="flow-arrow">→</div>
+          <div class="flow-step"><b>PC B</b><p>Uses the invite and connects directly to PC A.</p></div><div class="flow-arrow">→</div>
+          <div class="flow-step"><b>PC A</b><p>Sends the peers it already knows.</p></div><div class="flow-arrow">→</div>
+          <div class="flow-step"><b>PC B</b><p>Stores the list and opens direct links to those peers.</p></div>
+        </div>
+      </section>
+
+      <section id="internet">
+        <div class="section-heading">
+          <span class="section-id">04 — NET</span>
+          <div><h2>Direct internet links</h2><p>The Node Connector tries each direct method in order. It stops when one works.</p></div>
+        </div>
+
+        <div class="network-limit">
+          <article class="limit-side">
+            <h3>Connection order</h3>
+            <ol class="attempt-list">
+              <li>Use a reachable public IPv6 address.</li>
+              <li>Use a reachable public IPv4 address.</li>
+              <li>Ask the router to open a port with UPnP or NAT-PMP.</li>
+              <li>Have both PCs send packets and attempt hole punching.</li>
+              <li>Mark the peer unavailable when every method fails.</li>
+            </ol>
+          </article>
+          <article class="limit-side">
+            <h3>Hard network limit</h3>
+            <p>Some routers and internet providers block every direct method. Software cannot always create a direct path through them.</p>
+            <p>This is a network routing limit. It is not an encryption problem.</p>
+            <div class="limit-warning">No relay means no fallback. Two blocked PCs cannot communicate and remain unavailable to each other.</div>
+          </article>
+        </div>
+      </section>
+
+      <section id="jobs">
+        <div class="section-heading">
+          <span class="section-id">05 — JOB</span>
+          <div><h2>Temporary job ownership</h2><p>Any peer can create work. That peer coordinates only the job it created.</p></div>
+        </div>
+
+        <div class="job-diagram" aria-label="Job owner distributing work to peers and combining results">
+          <div class="job-node owner"><b>PC A / Job owner</b><span>Creates and splits Job 01</span></div>
+          <div class="job-arrow">→</div>
+          <div class="job-workers"><div class="job-worker">PC B<br>PART 01</div><div class="job-worker">PC C<br>PART 02</div><div class="job-worker">PC D<br>PART 03</div></div>
+          <div class="job-arrow">→</div>
+          <div class="job-node"><b>PC A</b><span>Combines returned results</span></div>
+        </div>
+      </section>
+
+      <section id="decisions">
+        <div class="section-heading">
+          <span class="section-id">06 — ADR</span>
+          <div><h2>Current decisions</h2><p>Agreed boundaries for this architecture step.</p></div>
+        </div>
+
+        <div class="decision-log">
+          <div class="decision-row"><div class="decision-state">Accepted</div><div class="decision-topic">Topology</div><div class="decision-text">Every PC is an equal peer. There is no permanent master.</div></div>
+          <div class="decision-row"><div class="decision-state">Accepted</div><div class="decision-topic">Communication</div><div class="decision-text">PCs move work and results through direct internet connections.</div></div>
+          <div class="decision-row"><div class="decision-state">Rejected</div><div class="decision-topic">Public server</div><div class="decision-text">The architecture will not depend on a public gateway, coordinator, or relay.</div></div>
+          <div class="decision-row"><div class="decision-state">Accepted</div><div class="decision-topic">Discovery</div><div class="decision-text">A new PC joins with an invite from one known peer, then learns the remaining peers.</div></div>
+          <div class="decision-row"><div class="decision-state">Accepted</div><div class="decision-topic">Job control</div><div class="decision-text">The job creator becomes the temporary owner of that job only.</div></div>
+          <div class="decision-row"><div class="decision-state">Deferred</div><div class="decision-topic">Compute method</div><div class="decision-text">LLM inference and model-training execution are outside this step and will be designed later.</div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    const toggle = document.querySelector('.theme-toggle');
+    const stored = localStorage.getItem('mesh-architecture-theme');
+    const initial = stored || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+
+    function applyTheme(theme) {
+      root.dataset.theme = theme;
+      toggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+      localStorage.setItem('mesh-architecture-theme', theme);
+    }
+
+    applyTheme(initial);
+    toggle.addEventListener('click', () => applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+  </script>
+</body>
+</html>
