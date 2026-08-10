@@ -3,6 +3,7 @@ mod app;
 use std::thread;
 
 use mesh_node::NodeRuntime;
+use mesh_store::default_store_paths;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> eframe::Result {
@@ -13,7 +14,16 @@ fn main() -> eframe::Result {
         .with_target(false)
         .init();
 
-    let runtime = NodeRuntime::create(default_display_name());
+    let paths = default_store_paths().expect("application data directory");
+    if let Some(override_dir) = std::env::var_os("MESH_DATA_DIR") {
+        let paths = mesh_store::StorePaths::isolated(override_dir);
+        return run_with_paths(paths);
+    }
+    run_with_paths(paths)
+}
+
+fn run_with_paths(paths: mesh_store::StorePaths) -> eframe::Result {
+    let runtime = NodeRuntime::create(default_display_name(), paths).expect("node runtime");
     let handle = runtime.handle();
 
     let worker = thread::Builder::new()

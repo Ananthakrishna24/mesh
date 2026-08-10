@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 mesh-core = { workspace = true }
 mesh-node = { workspace = true }
+mesh-store = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 tokio = { workspace = true }

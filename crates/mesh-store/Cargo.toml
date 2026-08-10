@@ -7,4 +7,11 @@ rust-version.workspace = true
 description = "SQLite state, migrations, and credential adapters"
 
 [dependencies]
+directories = { workspace = true }
+hex = { workspace = true }
 mesh-core = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }

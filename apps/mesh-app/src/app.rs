@@ -6,6 +6,7 @@ pub struct MeshApp {
     handle: NodeHandle,
     snapshots: tokio::sync::watch::Receiver<UiSnapshot>,
     display_name: String,
+    invitation_input: String,
     shutdown_sent: bool,
 }
 
@@ -18,6 +19,7 @@ impl MeshApp {
             handle,
             snapshots,
             display_name,
+            invitation_input: String::new(),
             shutdown_sent: false,
         }
     }
@@ -76,7 +78,8 @@ impl eframe::App for MeshApp {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.add_space(12.0);
             match snapshot.screen {
-                AppScreen::FirstRun => self.draw_first_run(ui, &snapshot),
+                AppScreen::FirstRun => self.draw_first_run(ui),
+                AppScreen::Enroll => self.draw_enroll(ui, &snapshot),
                 AppScreen::Dashboard => self.draw_dashboard(ui, &snapshot),
             }
         });
@@ -88,7 +91,7 @@ impl eframe::App for MeshApp {
 }
 
 impl MeshApp {
-    fn draw_first_run(&mut self, ui: &mut Ui, snapshot: &UiSnapshot) {
+    fn draw_first_run(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(28.0);
             ui.heading(RichText::new("Connect this PC to your mesh").size(28.0));
@@ -105,7 +108,7 @@ impl MeshApp {
 
         ui.horizontal_centered(|ui| {
             ui.allocate_ui_with_layout(
-                Vec2::new(520.0, 280.0),
+                Vec2::new(560.0, 320.0),
                 Layout::top_down(Align::Center),
                 |ui| {
                     card(ui, |ui| {
@@ -117,7 +120,7 @@ impl MeshApp {
                             ui.label("PC name");
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.display_name)
-                                    .desired_width(280.0)
+                                    .desired_width(300.0)
                                     .hint_text("This PC"),
                             );
                         });
@@ -134,22 +137,10 @@ impl MeshApp {
                     card(ui, |ui| {
                         ui.heading("Enroll this PC");
                         ui.add_space(8.0);
-                        if snapshot.enrollment_open {
-                            ui.label(
-                                "Enrollment arrives in the next implementation phase. Use Create a new mesh for the shell proof.",
-                            );
-                            ui.add_space(12.0);
-                            if ui.button("Back").clicked() {
-                                self.send(UiCommand::CancelEnrollment);
-                            }
-                        } else {
-                            ui.label(
-                                "Join an existing mesh with an invitation from another PC.",
-                            );
-                            ui.add_space(12.0);
-                            if ui.button("Enroll this PC").clicked() {
-                                self.send(UiCommand::OpenEnrollment);
-                            }
+                        ui.label("Join an existing mesh with an invitation from another PC.");
+                        ui.add_space(12.0);
+                        if ui.button("Enroll this PC").clicked() {
+                            self.send(UiCommand::OpenEnrollment);
                         }
                     });
                 },
@@ -157,10 +148,69 @@ impl MeshApp {
         });
     }
 
+    fn draw_enroll(&mut self, ui: &mut Ui, snapshot: &UiSnapshot) {
+        ui.heading("Enroll this PC");
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(
+                "On a connected PC, choose “Add another PC.” Copy the invitation and paste it here.",
+            )
+            .weak(),
+        );
+        ui.add_space(16.0);
+
+        card(ui, |ui| {
+            ui.label("Invitation");
+            ui.add_space(8.0);
+            ui.add(
+                egui::TextEdit::multiline(&mut self.invitation_input)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(6)
+                    .hint_text("mesh1:..."),
+            );
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if primary_button(ui, "Join mesh").clicked() {
+                    self.send(UiCommand::SubmitInvitation {
+                        text: self.invitation_input.clone(),
+                    });
+                }
+                if ui.button("Back").clicked() {
+                    self.send(UiCommand::CancelEnrollment);
+                }
+            });
+        });
+
+        if !snapshot.enrollment.steps.is_empty() || snapshot.enrollment.error.is_some() {
+            ui.add_space(16.0);
+            card(ui, |ui| {
+                ui.heading("Progress");
+                ui.add_space(8.0);
+                for step in &snapshot.enrollment.steps {
+                    ui.label(format!("✓ {step}"));
+                }
+                if !snapshot.enrollment.current.is_empty()
+                    && snapshot
+                        .enrollment
+                        .steps
+                        .last()
+                        .map(|step| step != &snapshot.enrollment.current)
+                        .unwrap_or(true)
+                {
+                    ui.label(format!("• {}", snapshot.enrollment.current));
+                }
+                if let Some(error) = &snapshot.enrollment.error {
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(180, 60, 60), error);
+                }
+            });
+        }
+    }
+
     fn draw_dashboard(&mut self, ui: &mut Ui, snapshot: &UiSnapshot) {
         ui.heading("Dashboard");
         ui.add_space(4.0);
-        ui.label(RichText::new("Local node is ready. Peer enrollment arrives in P02.").weak());
+        ui.label(RichText::new("Local node is ready.").weak());
         ui.add_space(18.0);
 
         ui.columns(2, |columns| {
@@ -174,7 +224,7 @@ impl MeshApp {
                     &snapshot
                         .local
                         .node_id
-                        .map(|id| id.to_string())
+                        .map(|id| id.short_hex())
                         .unwrap_or_else(|| "—".to_owned()),
                 );
                 kv(
@@ -183,7 +233,16 @@ impl MeshApp {
                     &snapshot
                         .local
                         .mesh_id
-                        .map(|id| id.to_string())
+                        .map(|id| id.short_hex())
+                        .unwrap_or_else(|| "—".to_owned()),
+                );
+                kv(
+                    ui,
+                    "Listen",
+                    &snapshot
+                        .local
+                        .listen_addr
+                        .map(|addr| addr.to_string())
                         .unwrap_or_else(|| "—".to_owned()),
                 );
                 kv(ui, "Peers", &snapshot.peers.len().to_string());
@@ -193,15 +252,7 @@ impl MeshApp {
                 ui.heading("Connected PCs");
                 ui.add_space(10.0);
                 if snapshot.peers.is_empty() {
-                    ui.label(RichText::new("No peers yet.").weak());
-                    ui.add_space(12.0);
-                    ui.add_enabled(false, egui::Button::new("Add another PC"));
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Invitation flow is implemented in P02.")
-                            .small()
-                            .weak(),
-                    );
+                    ui.label(RichText::new("No peers connected yet.").weak());
                 } else {
                     for peer in &snapshot.peers {
                         ui.horizontal(|ui| {
@@ -210,8 +261,39 @@ impl MeshApp {
                         });
                     }
                 }
+                ui.add_space(12.0);
+                if snapshot.can_create_invitation {
+                    if primary_button(ui, "Add another PC").clicked() {
+                        self.send(UiCommand::CreateInvitation);
+                    }
+                }
             });
         });
+
+        if let Some(invitation) = &snapshot.enrollment.invitation_text {
+            ui.add_space(16.0);
+            card(ui, |ui| {
+                ui.heading("Invitation");
+                ui.add_space(8.0);
+                ui.label("Copy this invitation and open it on the new PC.");
+                ui.add_space(8.0);
+                let mut invitation_text = invitation.clone();
+                ui.add(
+                    egui::TextEdit::multiline(&mut invitation_text)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(4),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Copy invitation").clicked() {
+                        ui.ctx().copy_text(invitation.clone());
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.send(UiCommand::ClearInvitation);
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -258,11 +340,14 @@ fn phase_badge(ui: &mut Ui, phase: RuntimePhase) {
     let (label, color) = match phase {
         RuntimePhase::Starting => ("Starting", Color32::from_rgb(120, 120, 120)),
         RuntimePhase::AwaitingOnboarding => ("Setup", Color32::from_rgb(180, 120, 20)),
+        RuntimePhase::Preparing => ("Preparing", Color32::from_rgb(180, 120, 20)),
+        RuntimePhase::Connecting => ("Connecting", Color32::from_rgb(40, 110, 180)),
         RuntimePhase::Ready => ("Ready", Color32::from_rgb(30, 140, 70)),
+        RuntimePhase::Failed => ("Failed", Color32::from_rgb(160, 50, 50)),
         RuntimePhase::ShuttingDown => ("Stopping", Color32::from_rgb(140, 60, 60)),
     };
 
-    let response = ui.allocate_response(Vec2::new(88.0, 22.0), Sense::hover());
+    let response = ui.allocate_response(Vec2::new(96.0, 22.0), Sense::hover());
     let rect = response.rect;
     ui.painter()
         .rect_filled(rect, 11.0, color.gamma_multiply(0.18));

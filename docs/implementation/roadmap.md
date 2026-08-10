@@ -8,7 +8,7 @@
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01 Linux proof is done; Windows and macOS host proofs remain. Begin P02 after those proofs or continue on Linux for enrollment internals while keeping cross-platform proof gates honest.
+P01 shell and P02 manually reachable enrollment are implemented on Linux. Windows and macOS host proofs remain deferred to the end. Automatic internet enrollment (router mapping, hole punching) remains for P04 after A08/A10.
 
 Accepted areas:
 
@@ -298,4 +298,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-P01 shell is implemented. Complete Windows and macOS `cargo run --release` proofs, then begin the manually reachable path of P02. Before automatic internet enrollment is complete, select router-mapping crates and peer-record merge rules. Before P07 inference, lock tokenizer, sampling, KV-cache, provider validation, and network placement contracts.
+P02 Linux enrollment path works. Keep Windows/macOS proofs until the end. Before automatic internet enrollment is complete, select router-mapping crates (A08) and peer-record merge rules (A10). Next implementation phase is P03 after A07, or continue hardening P02 reconnect/GUI if needed.

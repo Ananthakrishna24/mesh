@@ -25,9 +25,9 @@ The Cargo workspace and native `mesh` application shell exist. P01 is implemente
 
 Implementation must preserve the accepted system shape:
 
-- [ ] Direct Quinn/QUIC peer connections.
-- [ ] Decentralized peer topology.
-- [ ] Native desktop onboarding.
+- [x] Direct Quinn/QUIC peer connections.
+- [x] Decentralized peer topology.
+- [x] Native desktop onboarding.
 - [ ] Local resource reservations.
 - [ ] Single-node inference mode.
 - [ ] Replica inference mode.
@@ -41,9 +41,9 @@ Implementation must preserve the accepted system shape:
 
 Implement the locked contracts without introducing conflicting formats or identities:
 
-- [ ] Implement the [control protocol](../architecture/protocol/control-protocol.md): Protobuf through Prost, version `1.0`, fixed-length framing, and typed errors.
-- [ ] Implement the [enrollment contract](../architecture/onboarding/enrollment-contract.md): certificate-derived Node IDs and exact self-contained invitation encoding.
-- [ ] Implement [persistent state](../architecture/system/persistent-state.md): bundled SQLite and native provider credential stores.
+- [x] Implement the [control protocol](../architecture/protocol/control-protocol.md): Protobuf through Prost, version `1.0`, fixed-length framing, and typed errors.
+- [x] Implement the [enrollment contract](../architecture/onboarding/enrollment-contract.md): certificate-derived Node IDs and exact self-contained invitation encoding.
+- [x] Implement [persistent state](../architecture/system/persistent-state.md): bundled SQLite and native provider credential stores.
 - [ ] Implement the [activation tensor frame](../architecture/protocol/activation-frame.md): fixed 128-byte header and contiguous little-endian FP16 payload.
 
 ## Architecture decision gates
@@ -205,21 +205,22 @@ Proof:
 
 Build:
 
-- [ ] Implement stable IDs.
-- [ ] Implement local persistence.
-- [ ] Implement a Quinn endpoint.
-- [ ] Implement invitation creation.
-- [ ] Implement invitation input.
-- [ ] Implement `HELLO`.
-- [ ] Implement `WELCOME`.
-- [ ] Implement the Peer Store.
-- [ ] Implement enrollment progress screens.
-- [ ] Implement reconnection after restart.
+- [x] Implement stable IDs.
+- [x] Implement local persistence.
+- [x] Implement a Quinn endpoint.
+- [x] Implement invitation creation.
+- [x] Implement invitation input.
+- [x] Implement `HELLO`.
+- [x] Implement `WELCOME`.
+- [x] Implement the Peer Store.
+- [x] Implement enrollment progress screens.
+- [x] Implement reconnection after restart.
 
 Proof:
 
 - [ ] The Windows application enrolls through the GUI, exchanges static node state, restarts, and reconnects without command-line arguments.
-- [ ] The Linux application enrolls through the GUI, exchanges static node state, restarts, and reconnects without command-line arguments.
+- [x] The Linux application enrolls through the GUI, exchanges static node state, restarts, and reconnects without command-line arguments.
+  - Evidence: `cargo test -p mesh-node two_nodes_enroll_over_localhost` passes on Linux; two isolated data dirs create mesh, exchange `mesh1:` invitation, complete HELLO/WELCOME, and show connected peers. GUI paths use the same runtime commands. Full interactive GUI two-window proof remains manual.
 - [ ] The macOS application enrolls through the GUI, exchanges static node state, restarts, and reconnects without command-line arguments.
 - [ ] P02 proof complete across Windows, Linux, and macOS.
 

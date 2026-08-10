@@ -6,6 +6,9 @@ pub type CoreResult<T> = Result<T, CoreError>;
 pub enum CoreError {
     InvalidNodeId(String),
     InvalidMeshId(String),
+    InvalidEnrollmentId(String),
+    InvalidInvitation(String),
+    Protocol(String),
     ChannelClosed,
 }
 
@@ -14,6 +17,9 @@ impl Display for CoreError {
         match self {
             Self::InvalidNodeId(value) => write!(f, "invalid node id: {value}"),
             Self::InvalidMeshId(value) => write!(f, "invalid mesh id: {value}"),
+            Self::InvalidEnrollmentId(value) => write!(f, "invalid enrollment id: {value}"),
+            Self::InvalidInvitation(value) => write!(f, "invalid invitation: {value}"),
+            Self::Protocol(value) => write!(f, "protocol error: {value}"),
             Self::ChannelClosed => write!(f, "runtime channel closed"),
         }
     }

@@ -1,0 +1,107 @@
+syntax = "proto3";
+package mesh.v1;
+
+message ControlEnvelope {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  bytes message_id = 3;
+  bytes sender_node_id = 4;
+  optional bytes in_reply_to = 5;
+
+  oneof body {
+    Hello hello = 10;
+    Welcome welcome = 11;
+    PeerUpdate peer_update = 12;
+    Heartbeat heartbeat = 13;
+    ErrorMessage error = 14;
+  }
+}
+
+message Hello {
+  bytes mesh_id = 1;
+  uint32 minimum_protocol_minor = 2;
+  string display_name = 3;
+  optional bytes enrollment_id = 4;
+  optional bytes enrollment_secret = 5;
+  bytes capability_digest = 6;
+  repeated EndpointCandidate candidates = 7;
+}
+
+message Welcome {
+  uint32 selected_protocol_minor = 1;
+  PeerRecord responder = 2;
+  repeated PeerRecord known_peers = 3;
+}
+
+message PeerUpdate {
+  repeated PeerRecord peers = 1;
+}
+
+message Heartbeat {
+  int64 sent_at_unix_ms = 1;
+}
+
+message ErrorMessage {
+  ErrorCode code = 1;
+  optional bytes related_message_id = 2;
+  bool retriable = 3;
+  string summary = 4;
+  string detail = 5;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  MALFORMED_FRAME = 1;
+  UNSUPPORTED_PROTOCOL = 2;
+  IDENTITY_MISMATCH = 3;
+  MESH_MISMATCH = 4;
+  INVITE_INVALID = 5;
+  INVITE_EXPIRED = 6;
+  INVITE_ALREADY_USED = 7;
+  UNKNOWN_PEER = 8;
+  INVALID_STATE = 9;
+  RESOURCE_BUSY = 10;
+  RESERVATION_REJECTED = 11;
+  MODEL_PREPARATION_FAILED = 12;
+  REQUEST_REJECTED = 13;
+  TRANSFER_REJECTED = 14;
+  CANCELLED = 15;
+  INTERNAL = 16;
+}
+
+message PeerRecord {
+  bytes node_id = 1;
+  string display_name = 2;
+  bytes certificate_der = 3;
+  repeated EndpointCandidate candidates = 4;
+}
+
+message EndpointCandidate {
+  CandidateKind kind = 1;
+  string address = 2;
+  uint32 priority = 3;
+}
+
+enum CandidateKind {
+  CANDIDATE_KIND_UNSPECIFIED = 0;
+  GLOBAL_IPV6 = 1;
+  PUBLIC_IPV4 = 2;
+  ROUTER_MAPPING = 3;
+  MANUAL = 4;
+  PEER_OBSERVED = 5;
+  LOCAL_NETWORK = 6;
+}
+
+message EnrollmentInviteV1 {
+  uint32 format_version = 1;
+  uint32 protocol_major = 2;
+  uint32 protocol_minor_min = 3;
+  uint32 protocol_minor_max = 4;
+  bytes mesh_id = 5;
+  bytes inviter_node_id = 6;
+  string inviter_name = 7;
+  bytes enrollment_id = 8;
+  bytes enrollment_secret = 9;
+  int64 expires_at_unix_ms = 10;
+  repeated EndpointCandidate candidates = 11;
+}
