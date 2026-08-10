@@ -4,18 +4,16 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 # Done
 - Architecture docs and locked contracts through A11–A13; A05/A06 (`b3b4509`, `3e6e96a`).
 - P01–P06 Linux paths (through `218e5de`).
-- **P07 Linux implementation foundation** (`aa79a97`):
-  - `mesh-core`: `RequestId`, inference types (`SamplingParams`, `TokenResultEvent`, `InferenceView`), KV estimate helpers, UI Load/Generate/Cancel, proto fields 30–33 and 40–42.
-  - `mesh-compute`: Candle 0.11 Qwen3 complete-stage load (`LoadedQwen3`), CPU default, optional `cuda`/`metal` features, whole-shard safetensors mmap.
-  - `mesh-inference`: A05 sampler (ChaCha12, penalty→T→top-k→top-p), non-thinking chat template + `tokenizers`, `SingleNodeEngine` load/warmup/generate.
-  - `mesh-node` / `mesh-app` / `mesh-inference`: `cuda`/`metal` feature passthrough (`--features cuda` on `mesh-app`).
-  - `mesh-node`: prepare result retained; load/generate runtime events; engine returned via `GenerationFinished`.
-  - `mesh-app`: Inference card (load/unload/generate/cancel, prompt, output).
-  - Checklist/roadmap updated for partial P07 (build items checked; host proofs open).
-  - Verified: `cargo test -p mesh-core -p mesh-inference -p mesh-compute -p mesh-node --lib`; `cargo build -p mesh-app`.
+- P07 Linux implementation foundation (`aa79a97`).
+- **P07 Linux CPU host proof** (`ebe19d8`):
+  - HF metadata: no-redirect meta client; prefer origin `x-linked-etag` / `x-linked-size` over CDN ETag (fixes complete-shard digest mismatch).
+  - Official Qwen3 non-thinking template suffix: `<|im_start|>assistant\n<think>\n\n</think>\n\n`.
+  - Gated smoke: `runtime::tests::p07_single_node_prepare_load_generate_smoke` (`MESH_P07_SMOKE=1`).
+  - Host evidence: prepare 7.5 GiB Qwen3-4B@`1cfa9a720891`, load `backend=cpu`, generate `tokens=3 stop=eos output="Hello!"`.
+  - Checklist/roadmap updated with Linux CPU evidence notes (CUDA/Metal still open).
 
 # In progress
-- Nothing mid-edit. Working tree clean. Next is P07 host proof (prepare + load + generate).
+- Nothing mid-edit. Working tree clean after `ebe19d8`.
 
 # Decisions
 - Phases are serial. Do not parallelize implementation phases (`AGENTS.md`).
@@ -31,34 +29,33 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Default GUI generate uses temperature 0 for deterministic smoke.
 - Feature flags: `mesh-app --features cuda` → `mesh-node/cuda` → `mesh-inference/cuda` → `mesh-compute/cuda` (same for `metal`).
 - Windows still starts at **P07.5**. No parallel Windows track.
-- Prior A05–A13 / P04–P06 decisions unchanged (git history).
+- Durable P07 smoke data lives under `$HOME/mesh-p07-smoke` (not `/tmp`; tmpfs is too small for ~8GB weights).
+- HF LFS content digest is `x-linked-etag` on the origin response; CDN ETag after redirect is not SHA-256 of the file.
+- Qwen3 non-thinking requires the empty think block in the generation prompt; bare `assistant\n` still thinks.
 
 # Gotchas
 - Host has NVIDIA driver + `libcuda` but **no CUDA toolkit/`nvcc`**. Default build is CPU. `--features cuda` needs toolkit installed.
 - `UiCommand` is no longer `Eq` (`Generate` carries `f32`).
 - First-run / cancel-enrollment snapshot resets must preserve `models`, `resources`, and **`inference`**.
 - Engine `stop_reason` must be assigned on every generate loop exit path.
-- Qwen3-4B ~8GB FP16 weights; CPU generate is slow.
+- Qwen3-4B ~8GB FP16 weights; CPU F32 load uses more RAM; generate is slow on CPU without cache-hit warm path.
 - Flow: Probe/resolve → Prepare downloads → Load model → Generate. Load fails without prepare.
-- Load looks up `tokenizer.json`/`config.json` under HF hub cache `models--Qwen--Qwen3-4B/snapshots/<sha>/` (and `HF_HOME` / `~/.cache/huggingface/hub`).
+- Load looks up `tokenizer.json`/`config.json` under mesh HF cache `cache/hf-hub/models--Qwen--Qwen3-4B/snapshots/<sha>/` (and `HF_HOME` / `~/.cache/huggingface/hub`).
 - If only range artifacts exist in model-cache, load errors asking for whole shards — re-prepare complete plan.
-- Live HF download needs network; multi-GB.
-- Branch is **3 commits ahead of origin** (`b3b4509`, `3e6e96a`, `aa79a97`); push when ready.
+- Live HF download needs network; multi-GB. Reuse `MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke` for cache hits.
+- Gated smoke reuses restored mesh identity when `mesh.db` already exists (do not require `AwaitingOnboarding`).
+- Branch is **ahead of origin** by at least `ebe19d8`; push when ready.
 
 # Next
-1. Host smoke (network + disk), CPU path:
+1. When CUDA toolkit is available:
    ```bash
-   MESH_DATA_DIR=/tmp/mesh-a cargo run --release
+   MESH_DATA_DIR=$HOME/mesh-p07-smoke cargo run -p mesh-app --release --features cuda
    ```
-   Select Qwen3-4B → Check access → Probe/resolve → Prepare downloads → Load model → Generate.
-2. When CUDA toolkit is available:
-   ```bash
-   MESH_DATA_DIR=/tmp/mesh-a cargo run -p mesh-app --release --features cuda
-   ```
-3. Record Linux generate evidence under checklist P07 proof (CPU note and/or CUDA).
-4. Optional dual-window enrollment anytime (`/tmp/mesh-a`, `/tmp/mesh-b`).
-5. Do **not** start P08 until a Linux generate proof works.
-6. After Linux P07 path is proven: macOS Metal / Windows CUDA; then **P07.5**.
+   or re-run gated smoke with a CUDA-enabled build and record Linux CUDA checklist evidence.
+2. Optional dual-window enrollment anytime (`/tmp/mesh-a`, `/tmp/mesh-b`).
+3. Do **not** start P08 until a required backend proof is accepted; Linux CPU is host evidence only, not the CUDA checklist item.
+4. After Linux CUDA (or accepted path): macOS Metal / Windows CUDA; then **P07.5**.
+5. Push commits when ready.
 
 # Resume map
 | Path | Role |
@@ -73,6 +70,8 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 | `crates/mesh-inference/src/engine.rs` | Single-node load/generate |
 | `crates/mesh-inference/src/sampler.rs` | A05 sampler |
 | `crates/mesh-inference/src/tokenizer.rs` | Template + HF tokenizers |
+| `crates/mesh-model/src/huggingface.rs` | HF provider + LFS metadata |
 | `crates/mesh-core/src/inference.rs` | Shared inference types |
-| `crates/mesh-node/src/runtime.rs` | Load/generate wiring |
+| `crates/mesh-node/src/runtime.rs` | Load/generate wiring + P07 smoke |
 | `apps/mesh-app/src/app.rs` | Inference card |
+| `$HOME/mesh-p07-smoke` | Durable prepare cache for host smoke |
