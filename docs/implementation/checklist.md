@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU host proof (prepare/load/generate) and optional `cuda` feature; host CUDA/Metal proofs remain. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs (prepare/load/generate); Metal remains. Windows and macOS host proofs remain.
 
 
 
@@ -39,7 +39,8 @@ Implementation must preserve the accepted system shape:
 - [ ] Dense `Qwen/Qwen3-4B` complete-model proof.
 - [ ] Dense `Qwen/Qwen3-8B` distributed proof.
 - [ ] Native NVIDIA CUDA support on Windows.
-- [ ] Native NVIDIA CUDA support on Linux.
+- [x] Native NVIDIA CUDA support on Linux.
+  - Evidence: P07 gated smoke on RTX 4070 SUPER with Candle `backend=cuda` FP16 (`2026-08-10`).
 - [ ] Apple Metal support on macOS.
 
 Implement the locked contracts without introducing conflicting formats or identities:
@@ -402,8 +403,8 @@ Build:
 Proof:
 
 - [ ] The pinned Qwen3-4B model produces valid streamed output on Windows CUDA under the accepted correctness profile.
-- [ ] The pinned Qwen3-4B model produces valid streamed output on Linux CUDA under the accepted correctness profile.
-  - Linux CPU host evidence (not CUDA): `MESH_P07_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P07_MAX_NEW_TOKENS=16 cargo test -p mesh-node --lib --release runtime::tests::p07_single_node_prepare_load_generate_smoke -- --exact --nocapture` → prepare cache-hit 7.5 GiB, load `backend=cpu`, generate `tokens=3 stop=eos output="Hello!"` (2026-08-10). HF metadata fix: prefer origin `x-linked-etag` LFS digest over CDN ETag.
+- [x] The pinned Qwen3-4B model produces valid streamed output on Linux CUDA under the accepted correctness profile.
+  - Evidence: `MESH_P07_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P07_MAX_NEW_TOKENS=16 cargo test -p mesh-node --lib --release --features cuda runtime::tests::p07_single_node_prepare_load_generate_smoke -- --exact --nocapture` → prepare cache-hit 7.5 GiB, load `backend=cuda`, generate `tokens=3 stop=eos output="Hello!"` (2026-08-10, RTX 4070 SUPER). Host toolkit: user-local CUDA 13.1 (`$HOME/cuda-root`, `source $HOME/cuda-env.sh`); glibc 2.43 needs `rsqrt`/`rsqrtf` `noexcept` patch on `crt/math_functions.h`. Linux CPU host evidence retained: same smoke without `--features cuda` → `backend=cpu`.
 - [ ] The pinned Qwen3-4B model produces valid streamed output on macOS Metal under the accepted correctness profile.
 - [ ] P07 proof complete on all three required backends.
 
