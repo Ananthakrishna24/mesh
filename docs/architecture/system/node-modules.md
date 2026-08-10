@@ -60,6 +60,8 @@ Each peer record contains:
 
 **Rule:** each PC owns its local copy. There is no central peer database.
 
+Canonical merge rules: [Peer-record merge rules](../networking/peer-record-merge.md)
+
 ## M03 — Address Candidate Collector
 
 **Owns:** addresses another PC may try.

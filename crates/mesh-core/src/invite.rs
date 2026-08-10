@@ -9,7 +9,7 @@ use crate::protocol::proto::{
 };
 use crate::{
     CandidateKind, CoreError, CoreResult, EndpointCandidate, EnrollmentId, MeshId, NodeId,
-    PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_MINOR_MIN,
+    PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_MINOR_MIN, now_unix_ms,
 };
 
 pub const INVITE_PREFIX: &str = "mesh1:";
@@ -200,6 +200,10 @@ fn parse_proto_candidate(candidate: &ProtoCandidate) -> CoreResult<EndpointCandi
         kind,
         address,
         priority,
+        observed_at_unix_ms: now_unix_ms(),
+        expires_at_unix_ms: kind.default_expiry(now_unix_ms()),
+        source_node_id: None,
+        reachability: crate::CandidateReachability::Unknown,
     })
 }
 

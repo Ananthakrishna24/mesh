@@ -4,14 +4,14 @@ use mesh_core::{
     EnrollmentId, InvitationRecord, InvitationState, LocalIdentity, MeshId, NodeId, PeerRecord,
     identity_matches,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
 use crate::paths::StorePaths;
 use crate::repos;
 use crate::{StoreError, StoreResult};
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 #[derive(Debug)]
 pub struct Store {
@@ -256,7 +256,12 @@ impl Store {
                     node_id BLOB PRIMARY KEY,
                     display_name TEXT NOT NULL,
                     certificate_der BLOB NOT NULL,
-                    candidates_json TEXT NOT NULL
+                    candidates_json TEXT NOT NULL,
+                    last_successful_address TEXT,
+                    last_seen_unix_ms INTEGER,
+                    first_seen_unix_ms INTEGER NOT NULL DEFAULT 0,
+                    record_updated_at_unix_ms INTEGER NOT NULL DEFAULT 0,
+                    origin TEXT NOT NULL DEFAULT 'direct_peer'
                 );
 
                 CREATE TABLE invitations (
@@ -276,7 +281,37 @@ impl Store {
                 INSERT INTO onboarding (id, last_step) VALUES (1, 'not_enrolled');
                 "#,
             )?;
-            self.conn.pragma_update(None, "user_version", 1i32)?;
+            self.conn.pragma_update(None, "user_version", 2i32)?;
+            return Ok(());
+        }
+
+        if version < 2 {
+            let now = now_unix_ms();
+            self.conn.execute_batch(
+                r#"
+                ALTER TABLE peers ADD COLUMN last_successful_address TEXT;
+                ALTER TABLE peers ADD COLUMN last_seen_unix_ms INTEGER;
+                ALTER TABLE peers ADD COLUMN first_seen_unix_ms INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE peers ADD COLUMN record_updated_at_unix_ms INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE peers ADD COLUMN origin TEXT NOT NULL DEFAULT 'direct_peer';
+                "#,
+            )?;
+            self.conn.execute(
+                r#"
+                UPDATE peers
+                SET
+                    first_seen_unix_ms = CASE
+                        WHEN first_seen_unix_ms = 0 THEN ?1
+                        ELSE first_seen_unix_ms
+                    END,
+                    record_updated_at_unix_ms = CASE
+                        WHEN record_updated_at_unix_ms = 0 THEN ?1
+                        ELSE record_updated_at_unix_ms
+                    END
+                "#,
+                params![now],
+            )?;
+            self.conn.pragma_update(None, "user_version", 2i32)?;
         }
 
         Ok(())

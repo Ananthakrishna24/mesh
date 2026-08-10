@@ -80,12 +80,12 @@ pub fn build_welcome(
     known_peers: &[PeerRecord],
     in_reply_to: Bytes,
 ) -> ControlEnvelope {
-    let responder = PeerRecord {
-        node_id: identity.node_id,
-        display_name: identity.display_name.clone(),
-        certificate_der: identity.certificate_der.clone(),
-        candidates: local_candidates.to_vec(),
-    };
+    let responder = PeerRecord::new(
+        identity.node_id,
+        identity.display_name.clone(),
+        identity.certificate_der.clone(),
+        local_candidates.to_vec(),
+    );
     let welcome = Welcome {
         selected_protocol_minor: PROTOCOL_MINOR,
         responder: Some(peer_to_proto(&responder)),
@@ -233,12 +233,12 @@ pub async fn complete_inviter_handshake(
         return Err(NetError::Protocol("mesh mismatch".to_owned()));
     }
 
-    let peer = PeerRecord {
-        node_id: sender,
-        display_name: parsed.display_name.clone(),
-        certificate_der: peer_certificate_der,
-        candidates: parsed.candidates.clone(),
-    };
+    let peer = PeerRecord::new(
+        sender,
+        parsed.display_name.clone(),
+        peer_certificate_der,
+        parsed.candidates.clone(),
+    );
 
     if parsed.enrollment_id.is_some() {
         if let Err((code, detail)) = accept_enrollment(parsed, peer.clone()) {
@@ -349,12 +349,12 @@ fn peer_from_proto(peer: ProtoPeer) -> NetResult<PeerRecord> {
     if peer.display_name.trim().is_empty() || peer.display_name.len() > 128 {
         return Err(NetError::Protocol("invalid peer display name".to_owned()));
     }
-    Ok(PeerRecord {
+    Ok(PeerRecord::new(
         node_id,
-        display_name: peer.display_name,
-        certificate_der: peer.certificate_der.to_vec(),
-        candidates: candidates_from_proto(&peer.candidates)?,
-    })
+        peer.display_name,
+        peer.certificate_der.to_vec(),
+        candidates_from_proto(&peer.candidates)?,
+    ))
 }
 
 fn summary_for(code: ErrorCode) -> &'static str {

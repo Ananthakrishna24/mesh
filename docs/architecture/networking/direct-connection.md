@@ -190,8 +190,8 @@ No software-only algorithm can guarantee direct communication through every CGNA
 
 ## Open questions
 
-- Router-mapping crates for UPnP, NAT-PMP, and PCP.
 - Full-mesh peer-count limit.
-- Candidate expiry and peer-record merge rules.
 
+Router-mapping crates and Quinn pre-bound socket rules are accepted in [NAT and router mapping](nat-router-mapping.md).
+Candidate expiry and peer-record merge rules are accepted in [Peer-record merge rules](peer-record-merge.md).
 Network benchmark thresholds used by job scheduling are accepted in [Network benchmark and placement cost](network-benchmark.md).

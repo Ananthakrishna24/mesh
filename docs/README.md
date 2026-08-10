@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Active design |
-| Current phase | A07 accepted; P03 hardware and network discovery next |
+| Current phase | A08 and A10 accepted; P04 automatic direct connectivity next |
 | Implementation language | Rust |
 | First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
 
@@ -15,20 +15,22 @@ This folder is the project memory. Read it before changing architecture or code.
 2. [Node modules](architecture/system/node-modules.md)
 3. [Persistent state](architecture/system/persistent-state.md)
 4. [Direct connection algorithm](architecture/networking/direct-connection.md)
-5. [Network benchmark and placement cost](architecture/networking/network-benchmark.md)
-6. [Control protocol](architecture/protocol/control-protocol.md)
-7. [Desktop onboarding](architecture/onboarding/README.md)
-8. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
-9. [Distributed LLM inference](architecture/inference/README.md)
-10. [Activation tensor frame](architecture/protocol/activation-frame.md)
-11. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
-12. [Provider-backed model distribution](architecture/inference/model-distribution.md)
-13. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
-14. [GPU backends](architecture/compute/gpu-backends.md)
-15. [Architecture and implementation roadmap](implementation/roadmap.md)
-16. [Roadmap implementation checklist](implementation/checklist.md)
-17. [Rust workspace plan](implementation/rust-workspace.md)
-18. [Architecture decisions](decisions/)
+5. [NAT and router mapping](architecture/networking/nat-router-mapping.md)
+6. [Peer-record merge rules](architecture/networking/peer-record-merge.md)
+7. [Network benchmark and placement cost](architecture/networking/network-benchmark.md)
+8. [Control protocol](architecture/protocol/control-protocol.md)
+9. [Desktop onboarding](architecture/onboarding/README.md)
+10. [Enrollment contract](architecture/onboarding/enrollment-contract.md)
+11. [Distributed LLM inference](architecture/inference/README.md)
+12. [Activation tensor frame](architecture/protocol/activation-frame.md)
+13. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
+14. [Provider-backed model distribution](architecture/inference/model-distribution.md)
+15. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
+16. [GPU backends](architecture/compute/gpu-backends.md)
+17. [Architecture and implementation roadmap](implementation/roadmap.md)
+18. [Roadmap implementation checklist](implementation/checklist.md)
+19. [Rust workspace plan](implementation/rust-workspace.md)
+20. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -38,6 +40,8 @@ This folder is the project memory. Read it before changing architecture or code.
 | What runs inside each PC? | [Node modules](architecture/system/node-modules.md) |
 | Where is durable state stored? | [Persistent state](architecture/system/persistent-state.md) |
 | How do two PCs connect? | [Direct connection algorithm](architecture/networking/direct-connection.md) |
+| How is automatic router mapping done? | [NAT and router mapping](architecture/networking/nat-router-mapping.md) |
+| How are peer records and candidates merged? | [Peer-record merge rules](architecture/networking/peer-record-merge.md) |
 | How are links measured for placement? | [Network benchmark and placement cost](architecture/networking/network-benchmark.md) |
 | How are control messages framed and versioned? | [Control protocol](architecture/protocol/control-protocol.md) |
 | How does a user start and enroll a PC? | [Desktop onboarding](architecture/onboarding/README.md) |

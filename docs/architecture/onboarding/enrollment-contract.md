@@ -293,7 +293,7 @@ Enrollment itself succeeds. Provider access is requested only when a selected mo
 
 Any enrolled peer may create an invitation. Enrollment IDs prevent duplicate completion events when the same invitation is retried.
 
-Two PCs joining at once are independent. Peer Store merges their records using the accepted peer-record rules once those rules are finalized.
+Two PCs joining at once are independent. Peer Store merges their records using the accepted [peer-record merge rules](../networking/peer-record-merge.md).
 
 ## Cancellation
 

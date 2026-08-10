@@ -16,6 +16,8 @@ Read accepted decisions before changing a related subsystem.
 | [ADR-0010](0010-sqlite-state-and-native-credentials.md) | SQLite state and native provider credentials | Accepted |
 | [ADR-0011](0011-fixed-activation-frame.md) | Fixed activation tensor frame | Accepted |
 | [ADR-0012](0012-network-benchmark-and-placement-cost.md) | Network benchmark and placement cost | Accepted |
+| [ADR-0013](0013-nat-router-mapping-crates.md) | NAT and router mapping crates | Accepted |
+| [ADR-0014](0014-peer-record-merge-rules.md) | Peer-record merge rules | Accepted |
 
 
 A new decision must state its context, selected approach, rejected approaches, and consequences. A replacement decision must link to the decision it replaces.

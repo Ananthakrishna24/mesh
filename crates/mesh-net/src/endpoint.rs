@@ -1,9 +1,9 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
 use mesh_core::{LocalIdentity, NodeId};
-use quinn::{Connection, Endpoint};
+use quinn::{Connection, Endpoint, EndpointConfig, default_runtime};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::time::timeout;
 use tracing::info;
@@ -40,6 +40,11 @@ pub struct MeshEndpoint {
 
 impl MeshEndpoint {
     pub fn bind(identity: LocalIdentity, bind_addr: SocketAddr) -> NetResult<Self> {
+        let socket = UdpSocket::bind(bind_addr)?;
+        Self::from_udp_socket(identity, socket)
+    }
+
+    pub fn from_udp_socket(identity: LocalIdentity, socket: UdpSocket) -> NetResult<Self> {
         let (cert, key) = load_identity_material(&identity)?;
         let key_bytes = private_key_bytes(&key);
         let server_observed = ObservedCertificate::new();
@@ -51,7 +56,15 @@ impl MeshEndpoint {
             Vec::new(),
             server_observed,
         )?;
-        let endpoint = Endpoint::server(server_config, bind_addr)?;
+        let runtime = default_runtime().ok_or_else(|| {
+            NetError::Io(std::io::Error::other("no async runtime found for quinn"))
+        })?;
+        let endpoint = Endpoint::new(
+            EndpointConfig::default(),
+            Some(server_config),
+            socket,
+            runtime,
+        )?;
         let listen_addr = endpoint.local_addr()?;
         info!(%listen_addr, "quic endpoint bound");
 

@@ -72,6 +72,10 @@ A new PC receives an invite from one known peer. It connects to that peer, recei
 
 Canonical algorithm: [Direct connection algorithm](networking/direct-connection.md)
 
+Router mapping crates and Quinn socket binding: [NAT and router mapping](networking/nat-router-mapping.md)
+
+Peer Store merge and candidate expiry: [Peer-record merge rules](networking/peer-record-merge.md)
+
 ### Hardware report
 
 The Hardware Scanner reads local devices. Node State stores the result. The Node Connector shares a summary with connected peers.

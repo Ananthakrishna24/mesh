@@ -62,7 +62,7 @@ Expected dependencies:
 - `quinn` for QUIC.
 - `prost` for accepted control messages.
 - `rcgen`, Rustls, and SHA-256 support for accepted peer identity.
-- Router-mapping crates after evaluation.
+- `igd-next` (`aio_tokio`) for UPnP IGD and `crab_nat` for NAT-PMP/PCP after [A08](../architecture/networking/nat-router-mapping.md).
 
 It depends on `mesh-core`. It does not depend on GPU crates.
 

@@ -272,4 +272,64 @@ mod tests {
         assert!(saw_delay || left_delay, "expected delay measurement");
         assert!(saw_bandwidth || left_bw, "expected bandwidth measurement");
     }
+
+    #[tokio::test]
+    async fn prebound_udp_socket_serves_quic() {
+        use std::net::UdpSocket;
+
+        let server_cert = generate_node_certificate().expect("server cert");
+        let client_cert = generate_node_certificate().expect("client cert");
+        let mesh_id = MeshId::new();
+
+        let server_identity = LocalIdentity {
+            node_id: server_cert.node_id,
+            mesh_id,
+            display_name: "Server".to_owned(),
+            certificate_der: server_cert.certificate_der,
+            private_key_der: server_cert.private_key_der,
+            created_at_unix_ms: now_unix_ms(),
+        };
+        let client_identity = LocalIdentity {
+            node_id: client_cert.node_id,
+            mesh_id,
+            display_name: "Client".to_owned(),
+            certificate_der: client_cert.certificate_der,
+            private_key_der: client_cert.private_key_der,
+            created_at_unix_ms: now_unix_ms(),
+        };
+
+        let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .expect("pre-bind server udp socket");
+        let bound_port = server_socket.local_addr().expect("server local addr").port();
+        assert_ne!(bound_port, 0);
+
+        let server_endpoint =
+            MeshEndpoint::from_udp_socket(server_identity.clone(), server_socket)
+                .expect("server endpoint from pre-bound socket");
+        assert_eq!(server_endpoint.listen_addr().port(), bound_port);
+
+        let accept = tokio::spawn({
+            let server_endpoint = server_endpoint.clone();
+            async move {
+                let incoming = server_endpoint.accept().await.expect("accept");
+                incoming.peer_node_id
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let client_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .expect("pre-bind client udp socket");
+        let mut client_endpoint =
+            MeshEndpoint::from_udp_socket(client_identity.clone(), client_socket)
+                .expect("client endpoint from pre-bound socket");
+        let connected = client_endpoint
+            .connect(server_endpoint.listen_addr(), server_identity.node_id)
+            .await
+            .expect("connect through pre-bound sockets");
+
+        assert_eq!(connected.peer_node_id, server_identity.node_id);
+        let peer_id = accept.await.expect("accept task");
+        assert_eq!(peer_id, client_identity.node_id);
+    }
 }

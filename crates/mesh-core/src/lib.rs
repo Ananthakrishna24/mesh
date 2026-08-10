@@ -23,7 +23,10 @@ pub use invite::{
     decode_invitation_text, encode_invitation_text, secret_digest, validate_invite,
 };
 pub use peer::{
-    CandidateKind, EndpointCandidate, InvitationRecord, InvitationState, PeerRecord, PeerSummary,
+    CandidateKind, CandidateReachability, EndpointCandidate, InvitationRecord, InvitationState,
+    MAX_PEER_CANDIDATES, PeerMergeError, PeerRecord, PeerRecordOrigin, PeerSummary,
+    candidate_is_advertisable, filter_advertised_candidates, merge_candidates, merge_peer_records,
+    normalize_candidate_address, sort_candidates_for_dial,
 };
 pub use protocol::{
     MAX_CONTROL_FRAME_BYTES, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_MINOR_MIN, capability_digest,

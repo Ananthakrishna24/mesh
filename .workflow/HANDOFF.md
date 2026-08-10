@@ -5,20 +5,22 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Architecture docs and locked contracts through activation framing (`4582c8b`, `d34f0b4`).
 - P01 workspace + native `mesh` shell, `AGENTS.md`, checklist (`706453a`).
 - P02 enrollment store/runtime foundation (`bd9e28d`).
-- A07 + P03 Linux hardware/network discovery committed (`73d2575`):
-  - A07 contract + ADR-0012 (`docs/architecture/networking/network-benchmark.md`, `docs/decisions/0012-network-benchmark-and-placement-cost.md`).
-  - `mesh-core` capability/link types, age/stability/threshold helpers, UI hardware/link views.
-  - `mesh-hardware`: sysinfo CPU/memory/disk, NVML CUDA discovery, CPU FP32 proxy, Metal feature path.
-  - Control proto: CapabilityReport + BenchmarkRequest/Accept/Reject/Result.
-  - `mesh-net` benchmark streams (`MSHB`), session runner, post-handshake capability + directional delay/bandwidth.
-  - `mesh-node` hardware on start, live sessions, peer hardware/link metrics.
-  - GUI dashboard: local hardware, refresh, peer hardware, delay/bandwidth/stability.
-- Verified on Linux at commit time:
-  - `cargo test -p mesh-core -p mesh-hardware -p mesh-net -p mesh-node --lib` — pass
-  - `cargo build --release -p mesh-app` — pass
+- A07 + P03 Linux hardware/network discovery committed (`73d2575`).
+- A08 NAT/router mapping gate accepted (this session, uncommitted until user commits):
+  - Contract: `docs/architecture/networking/nat-router-mapping.md`
+  - ADR-0013: `docs/decisions/0013-nat-router-mapping-crates.md`
+  - Crates: `igd-next` (`aio_tokio`) for UPnP; `crab_nat` for NAT-PMP + PCP
+  - Quinn pre-bound socket path: `MeshEndpoint::from_udp_socket`
+  - Proof test: `mesh-net::prebound_udp_socket_serves_quic`
+- A10 peer-record merge gate accepted (this session, uncommitted until user commits):
+  - Contract: `docs/architecture/networking/peer-record-merge.md`
+  - ADR-0014: `docs/decisions/0014-peer-record-merge-rules.md`
+  - `mesh-core` candidate/peer metadata + pure merge helpers + unit tests
+  - `mesh-store` schema v2 peer columns + extended candidate JSON
+- Indexes/checklist/roadmap updated so P04 prerequisites are checked.
 
 # In progress
-- Nothing mid-edit. Working tree clean after `73d2575` (handoff snapshot refresh only if still dirty).
+- Nothing mid-edit. Ready for P04 implementation.
 
 # Decisions
 - Phases are serial. Do not parallelize implementation phases (`AGENTS.md`).
@@ -31,6 +33,10 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Both peers send capability first; sessions drain peer capability before benchmarks.
 - Bandwidth uses unidirectional QUIC stream, default 4 MiB, max 16 MiB.
 - First GPU token-rate deferred until real stage warm-up (P07).
+- A08: PCP then NAT-PMP then UPnP; bind UDP socket first, map that port, Quinn `Endpoint::new` on same socket; no STUN/TURN/relay.
+- A08 rejected `portmapper` hard dep (iroh-adjacent deps / toolchain).
+- A10: per-field ownership merge; candidate lifetimes by kind; third-party capability bodies not authoritative in v1; enrolled peers retained offline; addresses expire instead.
+- A10: `PeerUpdate` coalesce 5s on candidate churn; self refresh 10 min.
 
 # Gotchas
 - Quinn `SendStream::write_all` is inherent in this Quinn version.
@@ -40,16 +46,22 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Metal discovery is feature-gated (`mesh-hardware` feature `metal`) and unproven on macOS.
 - Windows NVML path compiles for Windows targets but is unproven on a Windows host.
 - Full interactive two-window GUI hardware/benchmark proof remains manual; runtime path is unit-tested.
+- Existing DBs on schema v1 migrate to v2 via `ALTER TABLE peers ...`; fresh DBs create v2 directly and set `user_version=2`.
+- Wire `EndpointCandidate` still carries kind/address/priority only; local observation/expiry/reachability are filled on receive until a compatible proto extension is added in P04 if needed.
 
 # Next
-1. Optional manual GUI proof on Linux:
+1. **Start P04 — Automatic direct connectivity** against A08/A10 contracts:
+   - Add `igd-next` + `crab_nat` deps to `mesh-net`.
+   - Implement router mapping module (PCP → NAT-PMP → UPnP) using pre-bound UDP socket.
+   - Publish `RouterMapping` candidates with lease expiry.
+   - Expand IPv6/IPv4 candidate collection.
+   - Implement `PeerUpdate` apply path with `merge_peer_records` / `merge_candidates`.
+   - Peer-assisted hole punching + guided firewall/manual forwarding recovery.
+2. Optional manual GUI proof on Linux still useful anytime:
    ```bash
    MESH_DATA_DIR=/tmp/mesh-a cargo run --release
-   # Create mesh → dashboard should show CPU/GPU
    MESH_DATA_DIR=/tmp/mesh-b cargo run --release
-   # Enroll → both dashboards show peer hardware + delay/bandwidth
    ```
-2. **Do not start P04** until **A08** (UPnP/NAT-PMP/PCP crates) and **A10** (peer-record merge rules) are resolved.
 3. Before P07 inference: lock **A05** tokenizer/sampling, **A06** KV-cache, **A11–A13** provider/cache.
 4. **End of project / final pass**: Windows and macOS `cargo run --release` + GUI enrollment/hardware proofs; then check remaining P01/P02/P03 proof boxes.
 
@@ -59,10 +71,12 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 | `AGENTS.md` | Agent coding/phase rules |
 | `docs/implementation/roadmap.md` | Canonical phase order |
 | `docs/implementation/checklist.md` | Progress checkboxes |
+| `docs/architecture/networking/nat-router-mapping.md` | A08 contract |
+| `docs/architecture/networking/peer-record-merge.md` | A10 contract |
 | `docs/architecture/networking/network-benchmark.md` | A07 contract |
-| `crates/mesh-core/` | IDs, proto, invite, hardware/link types, UI channel types |
+| `crates/mesh-core/` | IDs, proto, invite, hardware/link/peer merge types, UI channel types |
 | `crates/mesh-hardware/` | CPU/memory/disk/NVML/Metal discovery |
 | `crates/mesh-store/` | SQLite only |
-| `crates/mesh-net/` | Quinn, TLS, framing, handshake, benchmark, session |
+| `crates/mesh-net/` | Quinn, TLS, framing, handshake, benchmark, session, candidates |
 | `crates/mesh-node/src/runtime.rs` | Runtime composition, enrollment, hardware, sessions |
 | `apps/mesh-app/` | eframe GUI binary `mesh` |

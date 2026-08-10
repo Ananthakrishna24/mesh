@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01 and P02 are implemented on Linux. A07 is accepted. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P03 Linux paths are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
 
 ## Accepted baseline and locked contracts
 
@@ -132,11 +132,14 @@ Decision: [ADR-0012](../decisions/0012-network-benchmark-and-placement-cost.md)
 
 ### A08 — NAT and router integration
 
-- [ ] Select a Rust crate for UPnP.
-- [ ] Select a Rust crate for NAT-PMP.
-- [ ] Select a Rust crate for PCP.
-- [ ] Prove Quinn can use the mapped UDP socket.
-- [ ] Preserve guided manual UDP forwarding as the fallback.
+- [x] Select a Rust crate for UPnP.
+- [x] Select a Rust crate for NAT-PMP.
+- [x] Select a Rust crate for PCP.
+- [x] Prove Quinn can use the mapped UDP socket.
+- [x] Preserve guided manual UDP forwarding as the fallback.
+
+Canonical contract: [NAT and router mapping](../architecture/networking/nat-router-mapping.md)
+Decision: [ADR-0013](../decisions/0013-nat-router-mapping-crates.md)
 
 ### A09 — Enrollment identity and invitation encoding
 
@@ -144,12 +147,15 @@ Decision: [ADR-0012](../decisions/0012-network-benchmark-and-placement-cost.md)
 
 ### A10 — Peer-record merge rules
 
-- [ ] Define address expiry.
-- [ ] Define last-writer rules.
-- [ ] Define offline retention.
-- [ ] Define stale-capability handling.
-- [ ] Define merge-conflict handling.
-- [ ] Define update frequency.
+- [x] Define address expiry.
+- [x] Define last-writer rules.
+- [x] Define offline retention.
+- [x] Define stale-capability handling.
+- [x] Define merge-conflict handling.
+- [x] Define update frequency.
+
+Canonical contract: [Peer-record merge rules](../architecture/networking/peer-record-merge.md)
+Decision: [ADR-0014](../decisions/0014-peer-record-merge-rules.md)
 
 ### A11 — Provider manifest generation
 
@@ -259,8 +265,8 @@ Proof:
 
 Prerequisites:
 
-- [ ] Resolve A08 router integration before automatic internet enrollment is complete.
-- [ ] Resolve A10 peer-record merge rules before automatic internet enrollment is complete.
+- [x] Resolve A08 router integration before automatic internet enrollment is complete.
+- [x] Resolve A10 peer-record merge rules before automatic internet enrollment is complete.
 
 Build:
 

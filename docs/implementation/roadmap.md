@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, and P03 Linux hardware/network discovery are implemented. A07 is accepted. Windows and macOS host proofs remain deferred to the end. Automatic internet enrollment (router mapping, hole punching) remains for P04 after A08/A10.
+P01 shell, P02 enrollment, and P03 Linux hardware/network discovery are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P04 automatic direct connectivity.
 
 Accepted areas:
 
@@ -87,16 +87,15 @@ Accepted in [Network benchmark and placement cost](../architecture/networking/ne
 
 ### A08 — NAT and router integration
 
-Select Rust crates for UPnP, NAT-PMP, and PCP. Prove Quinn can use the mapped UDP socket. Keep manual UDP forwarding as the guided fallback.
+Accepted in [NAT and router mapping](../architecture/networking/nat-router-mapping.md) and [ADR-0013](../decisions/0013-nat-router-mapping-crates.md).
 
 ### A09 — Resolved
 
 Invitation encoding and QUIC identity are accepted in the [Enrollment contract](../architecture/onboarding/enrollment-contract.md).
 
-
 ### A10 — Peer-record merge rules
 
-Define address expiry, last-writer rules, offline retention, stale capability handling, merge conflicts, and update frequency.
+Accepted in [Peer-record merge rules](../architecture/networking/peer-record-merge.md) and [ADR-0014](../decisions/0014-peer-record-merge-rules.md).
 
 ### A11 — Provider manifest generation
 
@@ -298,4 +297,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-P03 Linux path works. Keep Windows/macOS proofs until the end. Before automatic internet enrollment is complete, select router-mapping crates (A08) and peer-record merge rules (A10). Next implementation phase is P04 after those gates, or continue cross-platform proofs later.
+A08 and A10 are accepted. Implement P04 automatic direct connectivity next. Keep Windows/macOS host proofs until the end. Before P06/P07 inference work, lock A05, A06, and A11–A13.
