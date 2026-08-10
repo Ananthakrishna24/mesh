@@ -119,7 +119,6 @@ pub fn clear(conn: &Connection) -> StoreResult<()> {
     Ok(())
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredCandidate {
     kind: String,
@@ -172,10 +171,9 @@ fn decode_candidates(value: &str) -> StoreResult<Vec<EndpointCandidate>> {
                     )));
                 }
             };
-            let address = candidate
-                .address
-                .parse()
-                .map_err(|error| StoreError::Corrupt(format!("invalid candidate address: {error}")))?;
+            let address = candidate.address.parse().map_err(|error| {
+                StoreError::Corrupt(format!("invalid candidate address: {error}"))
+            })?;
             let observed_at_unix_ms = candidate.observed_at_unix_ms.unwrap_or(0);
             let expires_at_unix_ms = candidate
                 .expires_at_unix_ms
@@ -190,9 +188,7 @@ fn decode_candidates(value: &str) -> StoreResult<Vec<EndpointCandidate>> {
                 Some("unreachable") => CandidateReachability::Unreachable,
                 Some("unknown") | None => CandidateReachability::Unknown,
                 Some(other) => {
-                    return Err(StoreError::Corrupt(format!(
-                        "unknown reachability {other}"
-                    )));
+                    return Err(StoreError::Corrupt(format!("unknown reachability {other}")));
                 }
             };
             Ok(EndpointCandidate {

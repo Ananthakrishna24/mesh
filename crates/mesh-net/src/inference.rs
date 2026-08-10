@@ -5,8 +5,8 @@ use mesh_core::protocol::proto::{
     TokenResult as ProtoTokenResult, control_envelope::Body,
 };
 use mesh_core::{
-    DeploymentId, InferenceRequestSpec, LocalIdentity, NextTokenFeedback, ReplicaEndpointView,
-    RequestId, SamplingParams, StopReason, TokenResultEvent, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    DeploymentId, InferenceRequestSpec, LocalIdentity, NextTokenFeedback, PROTOCOL_MAJOR,
+    PROTOCOL_MINOR, ReplicaEndpointView, RequestId, SamplingParams, StopReason, TokenResultEvent,
     random_message_id,
 };
 
@@ -150,9 +150,7 @@ pub fn build_next_token_feedback_envelope(
     }
 }
 
-pub fn next_token_feedback_from_proto(
-    feedback: ProtoNextToken,
-) -> NetResult<NextTokenFeedback> {
+pub fn next_token_feedback_from_proto(feedback: ProtoNextToken) -> NetResult<NextTokenFeedback> {
     Ok(NextTokenFeedback {
         deployment_id: deployment_id_from_bytes(&feedback.deployment_id)?,
         request_id: request_id_from_bytes(&feedback.request_id)?,
@@ -174,7 +172,9 @@ pub fn replica_status_from_proto(status: ProtoReplicaStatus) -> NetResult<Replic
     })
 }
 
-pub fn inference_request_from_proto(request: ProtoInferenceRequest) -> NetResult<InferenceRequestSpec> {
+pub fn inference_request_from_proto(
+    request: ProtoInferenceRequest,
+) -> NetResult<InferenceRequestSpec> {
     Ok(InferenceRequestSpec {
         deployment_id: deployment_id_from_bytes(&request.deployment_id)?,
         request_id: request_id_from_bytes(&request.request_id)?,
@@ -203,10 +203,7 @@ pub fn token_result_from_proto(result: ProtoTokenResult) -> NetResult<TokenResul
         token_id: result.token_id,
         token_index: result.token_index,
         is_last: result.is_last,
-        stop_reason: result
-            .stop_reason
-            .as_deref()
-            .and_then(StopReason::parse),
+        stop_reason: result.stop_reason.as_deref().and_then(StopReason::parse),
         sequence_length: result.sequence_length,
     })
 }
@@ -224,7 +221,6 @@ pub fn cancel_request_from_proto(
 fn deployment_id_from_bytes(bytes: &[u8]) -> NetResult<DeploymentId> {
     DeploymentId::from_slice(bytes).map_err(|error| NetError::Protocol(error.to_string()))
 }
-
 
 fn request_id_from_bytes(bytes: &[u8]) -> NetResult<RequestId> {
     RequestId::from_slice(bytes).map_err(|error| NetError::Protocol(error.to_string()))

@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use mesh_core::{ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, ModelFormat, PROVIDER_HUGGINGFACE};
+use mesh_core::{
+    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, ModelFormat, PROVIDER_HUGGINGFACE,
+};
 use serde_json::Value;
 
 use crate::manifest::{ArtifactRecord, CanonicalManifest, TensorRecord, TensorRole};
-use crate::safetensors::{
-    SafetensorsHeader, dtype_width_bytes, tensor_payload_absolute_range,
-};
+use crate::safetensors::{SafetensorsHeader, dtype_width_bytes, tensor_payload_absolute_range};
 use crate::{ModelError, ModelResult};
 
 #[derive(Debug, Clone)]
@@ -117,8 +117,12 @@ pub fn build_qwen3_dense_manifest(inputs: AdapterInputs) -> ModelResult<Canonica
         }
     }
 
-    let has_embed = tensors.iter().any(|tensor| tensor.role == TensorRole::Embedding);
-    let has_norm = tensors.iter().any(|tensor| tensor.role == TensorRole::FinalNorm);
+    let has_embed = tensors
+        .iter()
+        .any(|tensor| tensor.role == TensorRole::Embedding);
+    let has_norm = tensors
+        .iter()
+        .any(|tensor| tensor.role == TensorRole::FinalNorm);
     if !has_embed {
         return Err(ModelError::Invalid(
             "missing embedding tensors for qwen3-dense".to_owned(),
@@ -220,5 +224,3 @@ fn required_u64(config: &Value, key: &str) -> ModelResult<u64> {
         .and_then(Value::as_u64)
         .ok_or_else(|| ModelError::Invalid(format!("config missing numeric field {key}")))
 }
-
-

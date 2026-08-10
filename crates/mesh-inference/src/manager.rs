@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use mesh_core::{
-    CapabilityReport, DEFAULT_COMMIT_LEASE_MS, DEFAULT_HOLD_LEASE_MS, DeploymentId, LocalReservation,
-    NodeId, ReservationId, ReservationState, ReservationSummaryView, ReserveAccepted,
-    ReserveRejected, ResourceAmount, ResourceCapacity, ResourceManagerView, ResourceOffer,
-    ResourceQuery, clamp_lease_ms, now_unix_ms, offer_expiry,
+    CapabilityReport, DEFAULT_COMMIT_LEASE_MS, DEFAULT_HOLD_LEASE_MS, DeploymentId,
+    LocalReservation, NodeId, ReservationId, ReservationState, ReservationSummaryView,
+    ReserveAccepted, ReserveRejected, ResourceAmount, ResourceCapacity, ResourceManagerView,
+    ResourceOffer, ResourceQuery, clamp_lease_ms, now_unix_ms, offer_expiry,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -376,10 +376,7 @@ mod tests {
             .expect("release");
         let available = manager.available_amount(now_unix_ms());
         assert_eq!(available.execution_slots, capacity().execution_slots);
-        assert_eq!(
-            available.gpus[0].memory_bytes,
-            12 * 1024 * 1024 * 1024
-        );
+        assert_eq!(available.gpus[0].memory_bytes, 12 * 1024 * 1024 * 1024);
     }
 
     #[test]

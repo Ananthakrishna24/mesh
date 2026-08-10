@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use mesh_core::protocol::proto::{
     BenchmarkDirection, BenchmarkKind, BenchmarkRequest, ControlEnvelope, IntroductionOffer,
     IntroductionReady, PeerObserve, PeerRecord as ProtoPeer, PeerUpdate, control_envelope::Body,
@@ -6,18 +7,15 @@ use mesh_core::protocol::proto::{
 use mesh_core::{
     ActivationHeader, BandwidthMeasurement, CapabilityReport, DelayMeasurement, DeploymentId,
     EndpointCandidate, InferenceRequestSpec, LinkMeasurement, LocalIdentity, NextTokenFeedback,
-    NodeId, PeerRecord, RequestId, ReservationCommit, ReservationRelease, ReserveAccepted,
-    ReserveRejected, ReserveRequest, ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms,
-    random_message_id, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    NodeId, PROTOCOL_MAJOR, PROTOCOL_MINOR, PeerRecord, RequestId, ReservationCommit,
+    ReservationRelease, ReserveAccepted, ReserveRejected, ReserveRequest, ResourceOffer,
+    ResourceQuery, TokenResultEvent, now_unix_ms, random_message_id,
 };
-use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::activation::{
-    read_activation_frame, send_activation_on_connection, ActivationFrame,
-};
+use crate::activation::{ActivationFrame, read_activation_frame, send_activation_on_connection};
 use crate::benchmark::{
     build_capability_envelope, capability_from_proto, default_bandwidth_payload,
     respond_bandwidth_receive, respond_bandwidth_send, respond_delay_benchmark,
@@ -142,7 +140,9 @@ pub enum SessionEvent {
 
 #[derive(Debug, Clone)]
 pub enum SessionCommand {
-    SendPeerUpdate { peers: Vec<PeerRecord> },
+    SendPeerUpdate {
+        peers: Vec<PeerRecord>,
+    },
     SendIntroductionOffer {
         target_node_id: NodeId,
         attempt_id: [u8; 16],
@@ -156,12 +156,16 @@ pub enum SessionCommand {
         self_observed: std::net::SocketAddr,
         start_at_unix_ms: i64,
     },
-    SendResourceQuery { query: ResourceQuery },
+    SendResourceQuery {
+        query: ResourceQuery,
+    },
     SendResourceOffer {
         offer: ResourceOffer,
         in_reply_to: Option<Bytes>,
     },
-    SendReserveRequest { request: ReserveRequest },
+    SendReserveRequest {
+        request: ReserveRequest,
+    },
     SendReserveAccepted {
         accepted: ReserveAccepted,
         in_reply_to: Option<Bytes>,
@@ -170,17 +174,29 @@ pub enum SessionCommand {
         rejected: ReserveRejected,
         in_reply_to: Option<Bytes>,
     },
-    SendReservationCommit { commit: ReservationCommit },
-    SendReservationRelease { release: ReservationRelease },
-    SendReplicaStatus { status: ReplicaStatusMessage },
-    SendInferenceRequest { request: InferenceRequestSpec },
-    SendTokenResult { event: TokenResultEvent },
+    SendReservationCommit {
+        commit: ReservationCommit,
+    },
+    SendReservationRelease {
+        release: ReservationRelease,
+    },
+    SendReplicaStatus {
+        status: ReplicaStatusMessage,
+    },
+    SendInferenceRequest {
+        request: InferenceRequestSpec,
+    },
+    SendTokenResult {
+        event: TokenResultEvent,
+    },
     SendCancelRequest {
         deployment_id: DeploymentId,
         request_id: RequestId,
         reason: String,
     },
-    SendNextTokenFeedback { feedback: NextTokenFeedback },
+    SendNextTokenFeedback {
+        feedback: NextTokenFeedback,
+    },
     SendActivation {
         header: ActivationHeader,
         payload: Vec<u8>,

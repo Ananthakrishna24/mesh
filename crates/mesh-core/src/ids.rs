@@ -45,8 +45,7 @@ impl NodeId {
     }
 
     pub fn parse_hex(value: &str) -> CoreResult<Self> {
-        let bytes =
-            hex::decode(value).map_err(|_| CoreError::InvalidNodeId(value.to_owned()))?;
+        let bytes = hex::decode(value).map_err(|_| CoreError::InvalidNodeId(value.to_owned()))?;
         Self::from_slice(&bytes)
     }
 
@@ -111,8 +110,7 @@ impl MeshId {
     }
 
     pub fn parse_hex(value: &str) -> CoreResult<Self> {
-        let bytes =
-            hex::decode(value).map_err(|_| CoreError::InvalidMeshId(value.to_owned()))?;
+        let bytes = hex::decode(value).map_err(|_| CoreError::InvalidMeshId(value.to_owned()))?;
         Self::from_slice(&bytes)
     }
 
@@ -221,8 +219,8 @@ impl DeploymentId {
     }
 
     pub fn parse_hex(value: &str) -> CoreResult<Self> {
-        let bytes = hex::decode(value)
-            .map_err(|_| CoreError::InvalidDeploymentId(value.to_owned()))?;
+        let bytes =
+            hex::decode(value).map_err(|_| CoreError::InvalidDeploymentId(value.to_owned()))?;
         Self::from_slice(&bytes)
     }
 

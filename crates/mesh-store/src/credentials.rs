@@ -34,9 +34,7 @@ pub fn save_huggingface_token(token: &str) -> StoreResult<()> {
             "huggingface token must not be empty".to_owned(),
         ));
     }
-    entry()?
-        .set_password(trimmed)
-        .map_err(map_keyring)
+    entry()?.set_password(trimmed).map_err(map_keyring)
 }
 
 pub fn delete_huggingface_token() -> StoreResult<bool> {

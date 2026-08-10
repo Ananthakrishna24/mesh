@@ -21,9 +21,7 @@ use crate::adapter::{AdapterInputs, WeightShard, build_qwen3_dense_manifest};
 use crate::manifest::{ArtifactRecord, build_manifest_identity, hash_bytes_hex};
 use crate::provider::{ArtifactMetadata, ArtifactRef, ResolvedModel};
 use crate::safetensors::{parse_header_length, parse_safetensors_header};
-use crate::validate::{
-    RangeValidation, parse_content_range_header, validate_content_range,
-};
+use crate::validate::{RangeValidation, parse_content_range_header, validate_content_range};
 use crate::{ModelError, ModelResult};
 
 const USER_AGENT: &str = "mesh/0.1 (+https://github.com/local/mesh)";
@@ -116,9 +114,7 @@ impl HuggingFaceProvider {
         format!(
             "{}/{}",
             self.endpoint.trim_end_matches('/'),
-            format!(
-                "{repository}/resolve/{revision}/{relative_path}"
-            )
+            format!("{repository}/resolve/{revision}/{relative_path}")
         )
     }
 
@@ -186,7 +182,8 @@ impl HuggingFaceProvider {
                         } else {
                             ProviderAccessStatus::NeedsToken
                         },
-                        detail: "Repository is gated or private; save a valid read token".to_owned(),
+                        detail: "Repository is gated or private; save a valid read token"
+                            .to_owned(),
                     })
                 } else {
                     Err(ModelError::Provider(text))
@@ -365,8 +362,12 @@ impl HuggingFaceProvider {
     }
 
     pub async fn read_metadata(&self, artifact: &ArtifactRef) -> ModelResult<ArtifactMetadata> {
-        self.read_metadata_inner(&artifact.repository, &artifact.revision, &artifact.relative_path)
-            .await
+        self.read_metadata_inner(
+            &artifact.repository,
+            &artifact.revision,
+            &artifact.relative_path,
+        )
+        .await
     }
 
     async fn read_metadata_inner(
@@ -381,7 +382,8 @@ impl HuggingFaceProvider {
         if response.status() == StatusCode::NOT_FOUND {
             return Err(ModelError::NotFound(relative_path.to_owned()));
         }
-        if response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::FORBIDDEN
+        if response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::FORBIDDEN
         {
             return Err(ModelError::Access(format!(
                 "metadata denied for {relative_path}: {}",
@@ -413,7 +415,8 @@ impl HuggingFaceProvider {
             .authorize(self.meta_client.get(&url))
             .header(RANGE, "bytes=0-0");
         let response = request.send().await?;
-        if response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::FORBIDDEN
+        if response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::FORBIDDEN
         {
             return Err(ModelError::Access(format!(
                 "metadata denied for {relative_path}"
@@ -429,9 +432,7 @@ impl HuggingFaceProvider {
             )));
         }
         metadata_from_headers(relative_path, response.headers()).ok_or_else(|| {
-            ModelError::Invalid(format!(
-                "missing size/etag metadata for {relative_path}"
-            ))
+            ModelError::Invalid(format!("missing size/etag metadata for {relative_path}"))
         })
     }
 
@@ -454,12 +455,7 @@ impl HuggingFaceProvider {
                     )));
                 }
                 let header_bytes = self
-                    .fetch_range_inner(
-                        repository,
-                        revision,
-                        relative_path,
-                        8..(8 + header_len),
-                    )
+                    .fetch_range_inner(repository, revision, relative_path, 8..(8 + header_len))
                     .await?;
                 parse_safetensors_header(header_len, &header_bytes)
             }
@@ -756,9 +752,7 @@ mod tests {
     fn etag_digest_parsing() {
         assert_eq!(
             etag_to_digest("\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""),
-            Some(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned()
-            )
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned())
         );
         assert_eq!(etag_to_digest("W/\"abc\""), None);
     }

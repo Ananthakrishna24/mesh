@@ -1,8 +1,6 @@
 use std::time::{Duration, Instant};
 
-use mesh_core::{
-    CapabilityReport, ComputeProxy, GpuBackendKind, GpuDeviceInfo, now_unix_ms,
-};
+use mesh_core::{CapabilityReport, ComputeProxy, GpuBackendKind, GpuDeviceInfo, now_unix_ms};
 use sysinfo::{Disks, System};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,15 +36,16 @@ pub fn discover_capabilities() -> CapabilityReport {
     let memory_available_bytes = system.available_memory();
 
     let disks = Disks::new_with_refreshed_list();
-    let (disk_total_bytes, disk_available_bytes) = disks.list().iter().fold(
-        (0u64, 0u64),
-        |(total, available), disk| {
-            (
-                total.saturating_add(disk.total_space()),
-                available.saturating_add(disk.available_space()),
-            )
-        },
-    );
+    let (disk_total_bytes, disk_available_bytes) =
+        disks
+            .list()
+            .iter()
+            .fold((0u64, 0u64), |(total, available), disk| {
+                (
+                    total.saturating_add(disk.total_space()),
+                    available.saturating_add(disk.available_space()),
+                )
+            });
 
     let (gpus, gpu_status) = discover_gpus();
     let compute = measure_cpu_fp32_proxy();
@@ -105,7 +104,9 @@ fn discover_gpus() -> (Vec<GpuDeviceInfo>, String) {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     {
         match discover_metal_gpus() {
-            Ok(gpus) if !gpus.is_empty() => return (gpus, "Apple Metal GPU discovered.".to_owned()),
+            Ok(gpus) if !gpus.is_empty() => {
+                return (gpus, "Apple Metal GPU discovered.".to_owned());
+            }
             Ok(_) => {}
             Err(error) => return (Vec::new(), error.to_string()),
         }
@@ -121,9 +122,9 @@ fn discover_gpus() -> (Vec<GpuDeviceInfo>, String) {
 fn discover_nvidia_gpus() -> HardwareResult<Vec<GpuDeviceInfo>> {
     let nvml = nvml_wrapper::Nvml::init()
         .map_err(|error| HardwareError::Unavailable(format!("NVML unavailable: {error}")))?;
-    let count = nvml
-        .device_count()
-        .map_err(|error| HardwareError::Unavailable(format!("NVML device count failed: {error}")))?;
+    let count = nvml.device_count().map_err(|error| {
+        HardwareError::Unavailable(format!("NVML device count failed: {error}"))
+    })?;
     let driver_version = nvml.sys_driver_version().ok();
     let mut gpus = Vec::with_capacity(count as usize);
     for index in 0..count {
@@ -133,9 +134,7 @@ fn discover_nvidia_gpus() -> HardwareResult<Vec<GpuDeviceInfo>> {
         let name = device
             .name()
             .unwrap_or_else(|_| format!("NVIDIA GPU {index}"));
-        let uuid = device
-            .uuid()
-            .unwrap_or_else(|_| format!("nvml-{index}"));
+        let uuid = device.uuid().unwrap_or_else(|_| format!("nvml-{index}"));
         let memory = device.memory_info().ok();
         let total_memory_bytes = memory.as_ref().map(|info| info.total).unwrap_or(0);
         let available_memory_bytes = memory.as_ref().map(|info| info.free);
@@ -156,9 +155,8 @@ fn discover_nvidia_gpus() -> HardwareResult<Vec<GpuDeviceInfo>> {
 fn discover_metal_gpus() -> HardwareResult<Vec<GpuDeviceInfo>> {
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
 
-    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
-        HardwareError::Unavailable("Metal default device unavailable".to_owned())
-    })?;
+    let device = MTLCreateSystemDefaultDevice()
+        .ok_or_else(|| HardwareError::Unavailable("Metal default device unavailable".to_owned()))?;
     let name = device.name().to_string();
     let total = device.recommendedMaxWorkingSetSize();
     let free = total.saturating_sub(device.currentAllocatedSize());

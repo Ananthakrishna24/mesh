@@ -11,22 +11,22 @@ use mesh_core::invite::{
 };
 use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
-    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_CACHE_MAX_BYTES,
-    DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress,
-    GpuResourceAmount, HardwareSummaryView, InferencePhase, InferenceRequestSpec, LayerRange,
-    LinkMeasurement, LocalIdentity, LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView,
-    ModelDownloadProgress, ModelReference, NextTokenFeedback, NodeId, PeerRecord, PeerRecordOrigin,
-    PeerSummary, PlacementPlan, ProviderAccessReport, ProviderAuthMode, RecoveryAction,
-    ReplicaEndpointView, ReplicaHealth, RequestId, ReservationCommit, ReservationId,
-    ReservationRelease, ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams,
-    StageAssignment, StageRole, StopReason, TokenResultEvent, UiCommand, UiSnapshot,
-    filter_advertised_candidates, merge_peer_records, now_unix_ms, select_replica_route,
-    sort_candidates_for_dial,
+    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError,
+    DEFAULT_CACHE_MAX_BYTES, DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId,
+    EnrollmentProgress, GpuResourceAmount, HardwareSummaryView, InferencePhase,
+    InferenceRequestSpec, LayerRange, LinkMeasurement, LocalIdentity, LocalNodeSummary,
+    ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress, ModelReference,
+    NextTokenFeedback, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, PlacementPlan,
+    ProviderAccessReport, ProviderAuthMode, RecoveryAction, ReplicaEndpointView, ReplicaHealth,
+    RequestId, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest,
+    ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams, StageAssignment, StageRole,
+    StopReason, TokenResultEvent, UiCommand, UiSnapshot, filter_advertised_candidates,
+    merge_peer_records, now_unix_ms, select_replica_route, sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
 use mesh_inference::{
-    load_mesh_tokenizer, LocalResourceManager, MeshTokenizer, ReserveOutcome, Sampler,
-    SingleNodeEngine, StageActivation, StageHop, StageWorker,
+    LocalResourceManager, MeshTokenizer, ReserveOutcome, Sampler, SingleNodeEngine,
+    StageActivation, StageHop, StageWorker, load_mesh_tokenizer,
 };
 use mesh_model::{
     DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
@@ -242,7 +242,8 @@ impl RuntimeState {
         self.candidates
             .iter()
             .find(|candidate| {
-                candidate.kind == CandidateKind::LocalNetwork && !candidate.address.ip().is_loopback()
+                candidate.kind == CandidateKind::LocalNetwork
+                    && !candidate.address.ip().is_loopback()
             })
             .map(|candidate| candidate.address)
             .or_else(|| self.snapshot.local.listen_addr)
@@ -331,13 +332,17 @@ impl NodeHandle {
 }
 
 enum RuntimeEvent {
-    Incoming { incoming: IncomingPeer },
+    Incoming {
+        incoming: IncomingPeer,
+    },
     PeerJoined {
         peer: PeerRecord,
         address: SocketAddr,
         session_commands: Option<mpsc::Sender<SessionCommand>>,
     },
-    PeerFailed { message: String },
+    PeerFailed {
+        message: String,
+    },
     Session {
         peer_node_id: NodeId,
         event: SessionEvent,
@@ -432,7 +437,10 @@ pub struct NodeRuntime {
 }
 
 impl NodeRuntime {
-    pub fn create(display_name: impl Into<String>, paths: StorePaths) -> Result<Self, RuntimeError> {
+    pub fn create(
+        display_name: impl Into<String>,
+        paths: StorePaths,
+    ) -> Result<Self, RuntimeError> {
         let display_name = display_name.into();
         let store =
             Store::open(paths.clone()).map_err(|error| RuntimeError::Store(error.to_string()))?;
@@ -969,7 +977,6 @@ impl NodeRuntime {
                     .await;
                 self.publish();
             }
-
         }
     }
 
@@ -1024,11 +1031,8 @@ impl NodeRuntime {
                     .cloned()
                 {
                     let mut peer = peer;
-                    peer.candidates = with_peer_observed(
-                        peer.candidates,
-                        peer_observed,
-                        peer_node_id,
-                    );
+                    peer.candidates =
+                        with_peer_observed(peer.candidates, peer_observed, peer_node_id);
                     self.spawn_holepunch_dial(peer, peer_observed, start_at_unix_ms);
                 }
             }
@@ -1169,7 +1173,12 @@ impl NodeRuntime {
     }
 
     async fn apply_peer_update(&mut self, from_peer: NodeId, peers: Vec<PeerRecord>) {
-        let Some(local_id) = self.state.identity.as_ref().map(|identity| identity.node_id) else {
+        let Some(local_id) = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id)
+        else {
             return;
         };
         let now = now_unix_ms();
@@ -1237,7 +1246,12 @@ impl NodeRuntime {
         start_at_unix_ms: i64,
         observed_address: SocketAddr,
     ) {
-        let Some(local_id) = self.state.identity.as_ref().map(|identity| identity.node_id) else {
+        let Some(local_id) = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id)
+        else {
             return;
         };
         if target_node_id != local_id {
@@ -1271,8 +1285,7 @@ impl NodeRuntime {
             .cloned()
         {
             let mut peer = peer;
-            peer.candidates =
-                with_peer_observed(peer.candidates, observed_address, from_peer);
+            peer.candidates = with_peer_observed(peer.candidates, observed_address, from_peer);
             self.spawn_holepunch_dial(peer, observed_address, start_at_unix_ms);
         }
     }
@@ -1372,7 +1385,8 @@ impl NodeRuntime {
             warn!(%error, "failed to persist incoming peer");
         }
 
-        self.state.upsert_connected_peer(&peer, Some(remote_address));
+        self.state
+            .upsert_connected_peer(&peer, Some(remote_address));
         self.state
             .set_status(format!("Connected to {}.", peer.display_name));
         self.state.snapshot.phase = RuntimePhase::Ready;
@@ -1414,7 +1428,8 @@ impl NodeRuntime {
         self.start_endpoint(identity).await?;
         self.state.push_step("Opened the local connection port");
         if self.state.snapshot.enrollment.router_mapping_ok == Some(true) {
-            self.state.push_step("Router connection prepared automatically");
+            self.state
+                .push_step("Router connection prepared automatically");
         }
         self.state
             .set_ready("This PC is ready. Add another PC to enroll a peer.");
@@ -1469,7 +1484,8 @@ impl NodeRuntime {
             EnrollmentId::from_slice(&invite.enrollment_id).map_err(RuntimeError::Core)?;
         let mut secret = [0u8; 32];
         secret.copy_from_slice(&invite.enrollment_secret);
-        let mut candidates = candidates_from_proto(&invite.candidates).map_err(RuntimeError::Core)?;
+        let mut candidates =
+            candidates_from_proto(&invite.candidates).map_err(RuntimeError::Core)?;
         sort_candidates_for_dial(&mut candidates);
 
         self.state.push_step("Creating this PC's identity");
@@ -1491,7 +1507,8 @@ impl NodeRuntime {
         self.start_endpoint(identity.clone()).await?;
         self.state.push_step("Opened the local connection port");
         if self.state.snapshot.enrollment.router_mapping_ok == Some(true) {
-            self.state.push_step("Router connection prepared automatically");
+            self.state
+                .push_step("Router connection prepared automatically");
         }
         self.state.snapshot.phase = RuntimePhase::Connecting;
         self.state
@@ -1584,10 +1601,8 @@ impl NodeRuntime {
                 }
                 Err(_) => {
                     details.push(format!("{}: dial timed out", candidate.address));
-                    last_error = RuntimeError::Net(format!(
-                        "dial timed out for {}",
-                        candidate.address
-                    ));
+                    last_error =
+                        RuntimeError::Net(format!("dial timed out for {}", candidate.address));
                 }
             }
         }
@@ -1597,11 +1612,10 @@ impl NodeRuntime {
     }
 
     fn create_invitation(&mut self) -> Result<(), RuntimeError> {
-        let identity = self
-            .state
-            .identity
-            .clone()
-            .ok_or_else(|| RuntimeError::Store("create a mesh before inviting peers".to_owned()))?;
+        let identity =
+            self.state.identity.clone().ok_or_else(|| {
+                RuntimeError::Store("create a mesh before inviting peers".to_owned())
+            })?;
         let candidates = advertised_candidates(&self.state.candidates);
         if candidates.is_empty() {
             return Err(RuntimeError::Net(
@@ -1635,13 +1649,9 @@ impl NodeRuntime {
     }
 
     async fn start_endpoint(&mut self, identity: LocalIdentity) -> Result<(), RuntimeError> {
-        let socket = std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+        let endpoint = MeshEndpoint::bind_wildcard(identity.clone(), 0)
             .map_err(|error| RuntimeError::Net(error.to_string()))?;
-        let listen_addr = socket
-            .local_addr()
-            .map_err(|error| RuntimeError::Net(error.to_string()))?;
-        let endpoint = MeshEndpoint::from_udp_socket(identity.clone(), socket)
-            .map_err(|error| RuntimeError::Net(error.to_string()))?;
+        let listen_addr = endpoint.listen_addr();
 
         self.state.apply_identity(identity, listen_addr);
         self.state.candidates = collect_local_candidates(listen_addr);
@@ -1683,7 +1693,9 @@ impl NodeRuntime {
                 .filter(|candidate| {
                     matches!(
                         candidate.kind,
-                        CandidateKind::RouterMapping | CandidateKind::Manual | CandidateKind::PeerObserved
+                        CandidateKind::RouterMapping
+                            | CandidateKind::Manual
+                            | CandidateKind::PeerObserved
                     )
                 })
                 .cloned(),
@@ -1955,12 +1967,7 @@ impl NodeRuntime {
         });
     }
 
-    fn spawn_holepunch_dial(
-        &self,
-        peer: PeerRecord,
-        observed: SocketAddr,
-        start_at_unix_ms: i64,
-    ) {
+    fn spawn_holepunch_dial(&self, peer: PeerRecord, observed: SocketAddr, start_at_unix_ms: i64) {
         if self.sessions.contains_key(&peer.node_id) {
             return;
         }
@@ -2086,8 +2093,10 @@ impl NodeRuntime {
         self.state.snapshot.models.error = None;
         self.state.snapshot.models.progress = None;
         self.state.snapshot.models.last_prepare_summary = None;
-        self.state.snapshot.models.status_line =
-            format!("Selected {}@{}", reference.repository, reference.revision_hint);
+        self.state.snapshot.models.status_line = format!(
+            "Selected {}@{}",
+            reference.repository, reference.revision_hint
+        );
         self.state
             .set_status(format!("Selected model {}.", reference.repository));
     }
@@ -2163,8 +2172,9 @@ impl NodeRuntime {
         let _ = cleanup_incomplete(&self.paths.model_cache_dir, now_unix_ms(), true);
         self.refresh_model_cache_view();
         self.state.snapshot.models.status_line = format!("Cleared {removed} cache entries");
-        self.state
-            .set_status(format!("Cleared {removed} unreferenced model cache entries."));
+        self.state.set_status(format!(
+            "Cleared {removed} unreferenced model cache entries."
+        ));
     }
 
     fn refresh_model_cache_view(&mut self) {
@@ -2252,8 +2262,7 @@ impl NodeRuntime {
         self.state.snapshot.models.busy = true;
         self.state.snapshot.models.error = None;
         self.state.snapshot.models.progress = None;
-        self.state.snapshot.models.status_line =
-            format!("Resolving {}…", reference.repository);
+        self.state.snapshot.models.status_line = format!("Resolving {}…", reference.repository);
         self.state
             .set_status(format!("Resolving model {}…", reference.repository));
         tokio::spawn(async move {
@@ -2283,13 +2292,7 @@ impl NodeRuntime {
             self.state.snapshot.models.status_line = "Model not resolved".to_owned();
             return;
         };
-        if !self
-            .state
-            .snapshot
-            .models
-            .provider_access
-            .status
-            .is_ready()
+        if !self.state.snapshot.models.provider_access.status.is_ready()
             && self.state.snapshot.models.provider_access.public_read == false
             && self.current_provider_token().0.is_none()
         {
@@ -2328,7 +2331,9 @@ impl NodeRuntime {
         }
         impl ProgressSink for ChannelProgress {
             fn on_progress(&mut self, event: DownloadProgressEvent) {
-                let _ = self.tx.try_send(RuntimeEvent::ModelProgress(event.progress));
+                let _ = self
+                    .tx
+                    .try_send(RuntimeEvent::ModelProgress(event.progress));
             }
         }
 
@@ -2402,8 +2407,7 @@ impl NodeRuntime {
                     warn!(%error, "failed to persist model manifest");
                 }
                 self.state.snapshot.models.resolved_identity = Some(resolved.identity.clone());
-                self.state.snapshot.models.selected_model =
-                    Some(resolved.identity.summary_line());
+                self.state.snapshot.models.selected_model = Some(resolved.identity.summary_line());
                 self.state.snapshot.models.error = None;
                 self.state.snapshot.models.status_line = format!(
                     "Resolved {} ({} tensors)",
@@ -2473,8 +2477,7 @@ impl NodeRuntime {
             return;
         };
         let Some(prepared) = self.last_prepare.clone() else {
-            self.state.snapshot.inference.error =
-                Some("Prepare downloads before load.".to_owned());
+            self.state.snapshot.inference.error = Some("Prepare downloads before load.".to_owned());
             self.state.snapshot.inference.status_line = "Model not prepared".to_owned();
             return;
         };
@@ -2587,7 +2590,10 @@ impl NodeRuntime {
             max_new_tokens: max_new_tokens.max(1),
         };
 
-        if self.try_spawn_pipeline_generation(prompt.clone(), params).is_some() {
+        if self
+            .try_spawn_pipeline_generation(prompt.clone(), params)
+            .is_some()
+        {
             return;
         }
 
@@ -2669,7 +2675,8 @@ impl NodeRuntime {
         });
         if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
             peer.replica_active_requests = peer.replica_active_requests.saturating_add(1);
-            peer.replica_ready = peer.replica_active_requests < peer.replica_max_concurrent_requests;
+            peer.replica_ready =
+                peer.replica_active_requests < peer.replica_max_concurrent_requests;
             self.state.rebuild_peer_summaries();
         }
         self.state.snapshot.inference.busy = true;
@@ -2703,7 +2710,8 @@ impl NodeRuntime {
             return;
         }
         let Some(mut engine) = self.inference_engine.take() else {
-            self.state.snapshot.inference.error = Some("Load a model before generating.".to_owned());
+            self.state.snapshot.inference.error =
+                Some("Load a model before generating.".to_owned());
             self.state.snapshot.inference.status_line = "No model loaded".to_owned();
             return;
         };
@@ -2749,11 +2757,13 @@ impl NodeRuntime {
         }
         if let Some(pending) = self.pending_remote_generation.as_ref() {
             if let Some(session) = self.sessions.get(&pending.peer_node_id) {
-                let _ = session.commands.try_send(SessionCommand::SendCancelRequest {
-                    deployment_id: pending.deployment_id,
-                    request_id: pending.request_id,
-                    reason: "cancelled by user".to_owned(),
-                });
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendCancelRequest {
+                        deployment_id: pending.deployment_id,
+                        request_id: pending.request_id,
+                        reason: "cancelled by user".to_owned(),
+                    });
             }
         }
         self.state.snapshot.inference.status_line = "Cancelling generation…".to_owned();
@@ -2778,9 +2788,9 @@ impl NodeRuntime {
                 Ok(output) => {
                     if let Some(session) = self.sessions.get(&owner) {
                         for event in &output.tokens {
-                            let _ = session
-                                .commands
-                                .try_send(SessionCommand::SendTokenResult { event: event.clone() });
+                            let _ = session.commands.try_send(SessionCommand::SendTokenResult {
+                                event: event.clone(),
+                            });
                         }
                         if output.tokens.last().is_none_or(|event| !event.is_last) {
                             let final_event = TokenResultEvent {
@@ -3097,12 +3107,15 @@ impl NodeRuntime {
             || assignment.layer_range.start != layer_start
             || assignment.layer_range.end != layer_end
         {
-            self.state.snapshot.inference.error = Some(
-                "LoadPipelineStage assignment does not match split_even placement".to_owned(),
-            );
+            self.state.snapshot.inference.error =
+                Some("LoadPipelineStage assignment does not match split_even placement".to_owned());
             return;
         }
-        let local_id = self.state.identity.as_ref().map(|identity| identity.node_id);
+        let local_id = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id);
         if local_id != Some(assignment.node_id) {
             self.state.snapshot.inference.error =
                 Some("LoadPipelineStage node_id is not this local node".to_owned());
@@ -3153,7 +3166,9 @@ impl NodeRuntime {
         }
         impl ProgressSink for ChannelProgress {
             fn on_progress(&mut self, event: DownloadProgressEvent) {
-                let _ = self.tx.try_send(RuntimeEvent::ModelProgress(event.progress));
+                let _ = self
+                    .tx
+                    .try_send(RuntimeEvent::ModelProgress(event.progress));
             }
         }
 
@@ -3288,7 +3303,11 @@ impl NodeRuntime {
         let deployment_id = placement.deployment_id;
         let model_line = stage.model_line.clone();
         let backend = stage.worker.backend().as_str().to_owned();
-        let local_id = self.state.identity.as_ref().map(|identity| identity.node_id)?;
+        let local_id = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id)?;
 
         let tokenizer = self.coordinator_tokenizer.as_ref()?;
         let token_ids = match tokenizer.encode_chat(None, &prompt) {
@@ -3313,9 +3332,11 @@ impl NodeRuntime {
         if final_stage.node_id == local_id {
             self.seed_final_pipeline_request(&request, local_id, prompt_len);
         } else if let Some(session) = self.sessions.get(&final_stage.node_id) {
-            let _ = session.commands.try_send(SessionCommand::SendInferenceRequest {
-                request: request.clone(),
-            });
+            let _ = session
+                .commands
+                .try_send(SessionCommand::SendInferenceRequest {
+                    request: request.clone(),
+                });
         }
 
         if first.node_id == local_id {
@@ -3402,12 +3423,18 @@ impl NodeRuntime {
     }
 
     fn on_pipeline_inference_request(&mut self, from_peer: NodeId, request: InferenceRequestSpec) {
-        let Some(stage_role) = self.pipeline_stage.as_ref().map(|stage| stage.assignment.role) else {
+        let Some(stage_role) = self
+            .pipeline_stage
+            .as_ref()
+            .map(|stage| stage.assignment.role)
+        else {
             self.reject_pipeline_request(from_peer, &request, "no local pipeline stage".to_owned());
             return;
         };
 
-        if stage_role.emits_logits() && stage_role != StageRole::First && stage_role != StageRole::Complete
+        if stage_role.emits_logits()
+            && stage_role != StageRole::First
+            && stage_role != StageRole::Complete
         {
             let prompt_len = request.input_token_ids.len() as u32;
             self.seed_final_pipeline_request(&request, from_peer, prompt_len);
@@ -3415,7 +3442,11 @@ impl NodeRuntime {
         }
 
         if stage_role != StageRole::First && stage_role != StageRole::Complete {
-            self.reject_pipeline_request(from_peer, &request, "local stage rejects token ids".to_owned());
+            self.reject_pipeline_request(
+                from_peer,
+                &request,
+                "local stage rejects token ids".to_owned(),
+            );
             return;
         }
 
@@ -3430,7 +3461,8 @@ impl NodeRuntime {
                 } else {
                     None
                 }
-            } else if self.local_active_requests > 0 && !self.pipeline_requests.contains_key(&request.request_id)
+            } else if self.local_active_requests > 0
+                && !self.pipeline_requests.contains_key(&request.request_id)
             {
                 Some("pipeline stage busy".to_owned())
             } else {
@@ -3550,7 +3582,11 @@ impl NodeRuntime {
             if let Some(stage) = self.pipeline_stage.as_mut() {
                 stage.worker.finish_request(feedback.request_id);
             }
-            if self.pipeline_requests.remove(&feedback.request_id).is_some() {
+            if self
+                .pipeline_requests
+                .remove(&feedback.request_id)
+                .is_some()
+            {
                 self.local_active_requests = self.local_active_requests.saturating_sub(1);
             }
             return;
@@ -3668,11 +3704,7 @@ impl NodeRuntime {
         }
     }
 
-    fn dispatch_stage_hop(
-        &mut self,
-        request_id: RequestId,
-        hop: StageHop,
-    ) -> Result<(), String> {
+    fn dispatch_stage_hop(&mut self, request_id: RequestId, hop: StageHop) -> Result<(), String> {
         match hop {
             StageHop::Activation(activation) => {
                 let next = self
@@ -3770,11 +3802,9 @@ impl NodeRuntime {
         }
         if Some(owner) != local_id {
             if let Some(session) = self.sessions.get(&owner) {
-                let _ = session
-                    .commands
-                    .try_send(SessionCommand::SendTokenResult {
-                        event: event.clone(),
-                    });
+                let _ = session.commands.try_send(SessionCommand::SendTokenResult {
+                    event: event.clone(),
+                });
             }
         } else if !self
             .pending_remote_generation
@@ -4127,17 +4157,17 @@ impl NodeRuntime {
             })
             .collect::<Vec<_>>();
         ResourceAmount {
-            system_memory_bytes: available
-                .system_memory_bytes
-                .min(64 * 1024 * 1024)
-                .max(if available.system_memory_bytes > 0 {
+            system_memory_bytes: available.system_memory_bytes.min(64 * 1024 * 1024).max(
+                if available.system_memory_bytes > 0 {
                     1
                 } else {
                     0
-                }),
-            disk_bytes: available.disk_bytes.min(128 * 1024 * 1024).max(
-                if available.disk_bytes > 0 { 1 } else { 0 },
+                },
             ),
+            disk_bytes: available
+                .disk_bytes
+                .min(128 * 1024 * 1024)
+                .max(if available.disk_bytes > 0 { 1 } else { 0 }),
             execution_slots: available.execution_slots.max(1),
             gpus,
         }
@@ -4550,8 +4580,7 @@ mod tests {
     async fn model_selection_updates_snapshot() {
         let dir = std::env::temp_dir().join(format!("mesh-model-ui-{}", now_unix_ms()));
         let _ = std::fs::remove_dir_all(&dir);
-        let runtime =
-            NodeRuntime::create("Model PC", StorePaths::isolated(&dir)).expect("runtime");
+        let runtime = NodeRuntime::create("Model PC", StorePaths::isolated(&dir)).expect("runtime");
         let handle = runtime.handle();
         let task = tokio::spawn(runtime.run());
 
@@ -4622,16 +4651,12 @@ mod tests {
         let handle = runtime.handle();
         let task = tokio::spawn(runtime.run());
 
-        let boot = wait_for_timeout(
-            &handle,
-            Duration::from_secs(60),
-            |snapshot| {
-                matches!(
-                    snapshot.phase,
-                    RuntimePhase::AwaitingOnboarding | RuntimePhase::Ready
-                )
-            },
-        )
+        let boot = wait_for_timeout(&handle, Duration::from_secs(60), |snapshot| {
+            matches!(
+                snapshot.phase,
+                RuntimePhase::AwaitingOnboarding | RuntimePhase::Ready
+            )
+        })
         .await;
         if boot.phase == RuntimePhase::AwaitingOnboarding {
             handle
@@ -4641,11 +4666,9 @@ mod tests {
                 .await
                 .expect("create mesh");
         }
-        wait_for_timeout(
-            &handle,
-            Duration::from_secs(60),
-            |snapshot| snapshot.phase == RuntimePhase::Ready,
-        )
+        wait_for_timeout(&handle, Duration::from_secs(60), |snapshot| {
+            snapshot.phase == RuntimePhase::Ready
+        })
         .await;
 
         handle
@@ -4681,8 +4704,7 @@ mod tests {
         );
         eprintln!(
             "P07 provider access: status={:?} detail={}",
-            access.models.provider_access.status,
-            access.models.provider_access.detail
+            access.models.provider_access.status, access.models.provider_access.detail
         );
         handle
             .send(UiCommand::ProbeSelectedModel)
@@ -4734,12 +4756,16 @@ mod tests {
             .send(UiCommand::LoadSelectedModel)
             .await
             .expect("load model");
-        let loaded = wait_for_timeout(&handle, Duration::from_secs(load_timeout_secs), |snapshot| {
-            !snapshot.inference.busy
-                && (snapshot.inference.phase == Some(InferencePhase::Ready)
-                    || snapshot.inference.phase == Some(InferencePhase::Failed)
-                    || snapshot.inference.error.is_some())
-        })
+        let loaded = wait_for_timeout(
+            &handle,
+            Duration::from_secs(load_timeout_secs),
+            |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            },
+        )
         .await;
         assert!(
             loaded.inference.error.is_none(),
@@ -4807,7 +4833,6 @@ mod tests {
         let _ = task.await;
     }
 
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn p08_remote_replica_generate_smoke() {
         if std::env::var_os("MESH_P08_SMOKE").is_none() {
@@ -4835,10 +4860,8 @@ mod tests {
         std::fs::create_dir_all(&worker_dir).expect("worker dir");
         std::fs::create_dir_all(&coord_dir).expect("coord dir");
         for dir in [&worker_dir, &coord_dir] {
-            let _ = std::os::unix::fs::symlink(
-                cache_src.join("model-cache"),
-                dir.join("model-cache"),
-            );
+            let _ =
+                std::os::unix::fs::symlink(cache_src.join("model-cache"), dir.join("model-cache"));
             let _ = std::os::unix::fs::symlink(cache_src.join("cache"), dir.join("cache"));
         }
 
@@ -4867,7 +4890,10 @@ mod tests {
             })
             .await
             .expect("create mesh");
-        wait_for(&worker_handle, |snapshot| snapshot.phase == RuntimePhase::Ready).await;
+        wait_for(&worker_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::Ready
+        })
+        .await;
         worker_handle
             .send(UiCommand::CreateInvitation)
             .await
@@ -4933,13 +4959,14 @@ mod tests {
             .send(UiCommand::LoadSelectedModel)
             .await
             .expect("worker load");
-        let worker_ready = wait_for_timeout(&worker_handle, Duration::from_secs(60 * 60), |snapshot| {
-            !snapshot.inference.busy
-                && (snapshot.inference.phase == Some(InferencePhase::Ready)
-                    || snapshot.inference.phase == Some(InferencePhase::Failed)
-                    || snapshot.inference.error.is_some())
-        })
-        .await;
+        let worker_ready =
+            wait_for_timeout(&worker_handle, Duration::from_secs(60 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            })
+            .await;
         assert!(
             worker_ready.inference.error.is_none(),
             "worker load failed: {:?}",
@@ -4972,12 +4999,16 @@ mod tests {
             })
             .await
             .expect("generate");
-        let generated = wait_for_timeout(&coord_handle, Duration::from_secs(2 * 60 * 60), |snapshot| {
-            !snapshot.inference.busy
-                && (snapshot.inference.generated_tokens > 0
-                    || snapshot.inference.phase == Some(InferencePhase::Failed)
-                    || snapshot.inference.error.is_some())
-        })
+        let generated = wait_for_timeout(
+            &coord_handle,
+            Duration::from_secs(2 * 60 * 60),
+            |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.generated_tokens > 0
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            },
+        )
         .await;
         assert!(
             generated.inference.error.is_none(),
@@ -5020,9 +5051,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn p09_dual_node_pipeline_generate_smoke() {
         if std::env::var_os("MESH_P09_MULTI_SMOKE").is_none() {
-            eprintln!(
-                "skipping P09 dual-node pipeline smoke; set MESH_P09_MULTI_SMOKE=1 to run"
-            );
+            eprintln!("skipping P09 dual-node pipeline smoke; set MESH_P09_MULTI_SMOKE=1 to run");
             return;
         }
 
@@ -5046,10 +5075,8 @@ mod tests {
         std::fs::create_dir_all(&first_dir).expect("first dir");
         std::fs::create_dir_all(&final_dir).expect("final dir");
         for dir in [&first_dir, &final_dir] {
-            let _ = std::os::unix::fs::symlink(
-                cache_src.join("model-cache"),
-                dir.join("model-cache"),
-            );
+            let _ =
+                std::os::unix::fs::symlink(cache_src.join("model-cache"), dir.join("model-cache"));
             let _ = std::os::unix::fs::symlink(cache_src.join("cache"), dir.join("cache"));
         }
 
@@ -5062,8 +5089,8 @@ mod tests {
         eprintln!("P09 multi: boot runtimes");
         let first = NodeRuntime::create("P09 First", StorePaths::isolated(&first_dir))
             .expect("first runtime");
-        let final_node =
-            NodeRuntime::create("P09 Final", StorePaths::isolated(&final_dir)).expect("final runtime");
+        let final_node = NodeRuntime::create("P09 Final", StorePaths::isolated(&final_dir))
+            .expect("final runtime");
         let first_handle = first.handle();
         let final_handle = final_node.handle();
         let first_task = tokio::spawn(first.run());
@@ -5079,7 +5106,10 @@ mod tests {
             })
             .await
             .expect("create mesh");
-        wait_for(&first_handle, |snapshot| snapshot.phase == RuntimePhase::Ready).await;
+        wait_for(&first_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::Ready
+        })
+        .await;
         first_handle
             .send(UiCommand::CreateInvitation)
             .await
@@ -5244,14 +5274,13 @@ mod tests {
             })
             .await
             .expect("generate");
-        let generated =
-            wait_for_timeout(&first_handle, Duration::from_secs(30 * 60), |snapshot| {
-                !snapshot.inference.busy
-                    && (snapshot.inference.generated_tokens > 0
-                        || snapshot.inference.phase == Some(InferencePhase::Failed)
-                        || snapshot.inference.error.is_some())
-            })
-            .await;
+        let generated = wait_for_timeout(&first_handle, Duration::from_secs(30 * 60), |snapshot| {
+            !snapshot.inference.busy
+                && (snapshot.inference.generated_tokens > 0
+                    || snapshot.inference.phase == Some(InferencePhase::Failed)
+                    || snapshot.inference.error.is_some())
+        })
+        .await;
         assert!(
             generated.inference.error.is_none(),
             "pipeline generation failed: {:?}",
@@ -5281,11 +5310,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
-    async fn wait_for(
-        handle: &NodeHandle,
-        predicate: impl Fn(&UiSnapshot) -> bool,
-    ) -> UiSnapshot {
+    async fn wait_for(handle: &NodeHandle, predicate: impl Fn(&UiSnapshot) -> bool) -> UiSnapshot {
         wait_for_timeout(handle, Duration::from_secs(60), predicate).await
     }
 

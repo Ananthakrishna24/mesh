@@ -24,7 +24,10 @@ pub fn insert(conn: &Connection, record: &InvitationRecord) -> StoreResult<()> {
     Ok(())
 }
 
-pub fn get(conn: &Connection, enrollment_id: EnrollmentId) -> StoreResult<Option<InvitationRecord>> {
+pub fn get(
+    conn: &Connection,
+    enrollment_id: EnrollmentId,
+) -> StoreResult<Option<InvitationRecord>> {
     conn.query_row(
         r#"
         SELECT enrollment_id, secret_digest, expires_at_unix_ms, state, bound_node_id, created_at_unix_ms

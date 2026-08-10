@@ -30,7 +30,6 @@ impl ObservedCertificate {
     pub fn get(&self) -> Option<Vec<u8>> {
         self.inner.lock().expect("certificate lock").clone()
     }
-
 }
 
 #[derive(Debug)]
@@ -115,7 +114,11 @@ struct MeshClientCertVerifier {
 }
 
 impl MeshClientCertVerifier {
-    fn new(allow_unknown: bool, allowed: Vec<NodeId>, observed: Arc<ObservedCertificate>) -> Arc<Self> {
+    fn new(
+        allow_unknown: bool,
+        allowed: Vec<NodeId>,
+        observed: Arc<ObservedCertificate>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             allow_unknown,
             allowed: Mutex::new(allowed),

@@ -20,7 +20,11 @@ pub struct MeshTokenizer {
 }
 
 impl MeshTokenizer {
-    pub fn load(tokenizer_json: &Path, expected_hash: &str, eos_token_id: u32) -> Result<Self, TokenizerError> {
+    pub fn load(
+        tokenizer_json: &Path,
+        expected_hash: &str,
+        eos_token_id: u32,
+    ) -> Result<Self, TokenizerError> {
         let bytes = std::fs::read(tokenizer_json)?;
         let actual = hash_bytes_hex(&bytes);
         if !expected_hash.is_empty() && actual != expected_hash {

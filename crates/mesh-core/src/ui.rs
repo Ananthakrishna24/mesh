@@ -6,7 +6,6 @@ use crate::{
     PeerSummary, ResourceManagerView, format_bits_per_second, format_bytes, measurement_age_state,
 };
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppScreen {
     FirstRun,
@@ -55,7 +54,6 @@ pub struct ConnectivityRecovery {
     pub firewall_message: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalNodeSummary {
     pub display_name: String,
@@ -74,28 +72,37 @@ pub struct EnrollmentProgress {
     pub router_mapping_ok: Option<bool>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UiCommand {
-    CreateMesh { display_name: String },
+    CreateMesh {
+        display_name: String,
+    },
     OpenEnrollment,
     CancelEnrollment,
-    SubmitInvitation { text: String },
+    SubmitInvitation {
+        text: String,
+    },
     CreateInvitation,
     ClearInvitation,
     RefreshHardware,
     RetryAutomaticConnectivity,
     ShowManualForwarding,
     HideManualForwarding,
-    SetManualPublicAddress { address: String },
+    SetManualPublicAddress {
+        address: String,
+    },
     ApplyManualPublicAddress,
     ShowFirewallHelp,
     HideFirewallHelp,
     RunLocalReservationProbe,
     ReleaseAllLocalReservations,
-    SelectModel { reference: crate::ModelReference },
+    SelectModel {
+        reference: crate::ModelReference,
+    },
     RefreshProviderAccess,
-    SaveHuggingFaceToken { token: String },
+    SaveHuggingFaceToken {
+        token: String,
+    },
     DeleteHuggingFaceToken,
     ProbeSelectedModel,
     PrepareSelectedModel,
@@ -113,11 +120,15 @@ pub enum UiCommand {
         node_ids: Vec<String>,
     },
     UnloadModel,
-    Generate { prompt: String, max_new_tokens: u32, temperature: f32, seed: u64 },
+    Generate {
+        prompt: String,
+        max_new_tokens: u32,
+        temperature: f32,
+        seed: u64,
+    },
     CancelGeneration,
     Shutdown,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HardwareSummaryView {
@@ -272,4 +283,3 @@ impl UiSnapshot {
         snapshot
     }
 }
-

@@ -25,8 +25,14 @@ pub fn load(conn: &Connection) -> StoreResult<Option<LocalIdentity>> {
         )
         .optional()?;
 
-    let Some((node_id, mesh_id, display_name, certificate_der, private_key_der, created_at_unix_ms)) =
-        row
+    let Some((
+        node_id,
+        mesh_id,
+        display_name,
+        certificate_der,
+        private_key_der,
+        created_at_unix_ms,
+    )) = row
     else {
         return Ok(None);
     };

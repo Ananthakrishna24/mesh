@@ -366,7 +366,9 @@ pub fn merge_peer_records(
         merged.origin = PeerRecordOrigin::IndirectPeer;
     }
 
-    merged.last_successful_address = local.last_successful_address.or(incoming.last_successful_address);
+    merged.last_successful_address = local
+        .last_successful_address
+        .or(incoming.last_successful_address);
     let incoming_first = if incoming.first_seen_unix_ms == 0 {
         now_ms
     } else {

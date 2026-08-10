@@ -164,7 +164,9 @@ pub async fn run_delay_benchmark(
         Some(Body::BenchmarkAccept(BenchmarkAccept { probe_id: accepted }))
             if accepted.as_ref() == probe_id => {}
         Some(Body::BenchmarkReject(BenchmarkReject { reason, .. })) => {
-            return Err(NetError::Protocol(format!("delay benchmark rejected: {reason}")));
+            return Err(NetError::Protocol(format!(
+                "delay benchmark rejected: {reason}"
+            )));
         }
         _ => {
             return Err(NetError::Protocol(
@@ -314,7 +316,8 @@ pub async fn run_bandwidth_send(
     recv: &mut RecvStream,
     payload_bytes: u64,
 ) -> NetResult<BandwidthBenchmarkOutcome> {
-    let payload_bytes = payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
+    let payload_bytes =
+        payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
     let probe_id = random_probe_id();
     let request = ControlEnvelope {
         protocol_major: PROTOCOL_MAJOR,
@@ -393,7 +396,8 @@ pub async fn run_bandwidth_receive(
     recv: &mut RecvStream,
     payload_bytes: u64,
 ) -> NetResult<BandwidthBenchmarkOutcome> {
-    let payload_bytes = payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
+    let payload_bytes =
+        payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
     let probe_id = random_probe_id();
     let request = ControlEnvelope {
         protocol_major: PROTOCOL_MAJOR,
@@ -465,7 +469,8 @@ pub async fn respond_bandwidth_receive(
     probe_id: Bytes,
     payload_bytes: u64,
 ) -> NetResult<BandwidthBenchmarkOutcome> {
-    let payload_bytes = payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
+    let payload_bytes =
+        payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
     let accept = ControlEnvelope {
         protocol_major: PROTOCOL_MAJOR,
         protocol_minor: PROTOCOL_MINOR,
@@ -521,7 +526,8 @@ pub async fn respond_bandwidth_send(
     probe_id: Bytes,
     payload_bytes: u64,
 ) -> NetResult<()> {
-    let payload_bytes = payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
+    let payload_bytes =
+        payload_bytes.clamp(MIN_BANDWIDTH_PAYLOAD_BYTES, MAX_BANDWIDTH_PAYLOAD_BYTES);
     let accept = ControlEnvelope {
         protocol_major: PROTOCOL_MAJOR,
         protocol_minor: PROTOCOL_MINOR,

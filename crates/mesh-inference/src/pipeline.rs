@@ -3,11 +3,11 @@ use std::path::Path;
 
 use mesh_compute::{Qwen3Stage, WeightFile};
 use mesh_core::{
-    stage_kv_reserve_bytes, ActivationHeader, DeploymentId, LayerRange, PlacementPlan, RequestId,
-    SamplingParams, StageRole, StopReason, TokenResultEvent, TransferKind, FIRST_CONTEXT_LIMIT,
-    FIRST_MAX_CONCURRENT_REQUESTS, ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST,
+    ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST, ActivationHeader, DeploymentId,
+    FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, LayerRange, PlacementPlan, RequestId,
+    SamplingParams, StageRole, StopReason, TokenResultEvent, TransferKind, stage_kv_reserve_bytes,
 };
-use mesh_model::{materialize_stage_weight_files, PrepareResult, ResolvedModel};
+use mesh_model::{PrepareResult, ResolvedModel, materialize_stage_weight_files};
 use thiserror::Error;
 
 use crate::engine::locate_sidecar;
@@ -46,9 +46,7 @@ impl<T> BoundedQueue<T> {
 
     fn push(&mut self, item: T) -> Result<(), PipelineError> {
         if self.items.len() >= self.capacity {
-            return Err(PipelineError::Message(
-                "activation queue full".to_owned(),
-            ));
+            return Err(PipelineError::Message("activation queue full".to_owned()));
         }
         self.items.push_back(item);
         Ok(())
@@ -209,7 +207,9 @@ impl StageWorker {
         sequence_position: u64,
         activation: &candle_core::Tensor,
     ) -> Result<StageActivation, PipelineError> {
-        let (batch, sequence, hidden) = activation.dims3().map_err(mesh_compute::ComputeError::from)?;
+        let (batch, sequence, hidden) = activation
+            .dims3()
+            .map_err(mesh_compute::ComputeError::from)?;
         let transfer_id = self.allocate_transfer_id(request_id);
         let header = ActivationHeader::qwen3_hidden(
             deployment_id,
@@ -268,7 +268,13 @@ impl StageWorker {
         }
         self.begin_request(request_id);
         let activation = self.stage.prefill_tokens(token_ids)?;
-        self.hop_from_hidden(deployment_id, request_id, TransferKind::Prefill, 0, &activation)
+        self.hop_from_hidden(
+            deployment_id,
+            request_id,
+            TransferKind::Prefill,
+            0,
+            &activation,
+        )
     }
 
     pub fn decode_from_token(
@@ -399,9 +405,7 @@ impl PipelineEngine {
         prefer_cuda: bool,
         hf_tokenizer_path: Option<&Path>,
     ) -> Result<Self, PipelineError> {
-        placement
-            .validate()
-            .map_err(PipelineError::Message)?;
+        placement.validate().map_err(PipelineError::Message)?;
         if placement.deployment_id != deployment_id {
             return Err(PipelineError::Message(
                 "placement deployment_id mismatch".to_owned(),
@@ -485,9 +489,7 @@ impl PipelineEngine {
             ));
         }
         if self.stages.is_empty() {
-            return Err(PipelineError::Message(
-                "pipeline has no stages".to_owned(),
-            ));
+            return Err(PipelineError::Message("pipeline has no stages".to_owned()));
         }
 
         for stage in &mut self.stages {
@@ -517,7 +519,11 @@ impl PipelineEngine {
 
         let mut logits = self.run_prefill(request_id, prompt_token_ids)?;
         loop {
-            if !should_continue() || self.stages.iter().any(|stage| stage.is_cancelled(request_id))
+            if !should_continue()
+                || self
+                    .stages
+                    .iter()
+                    .any(|stage| stage.is_cancelled(request_id))
             {
                 stop_reason = StopReason::Cancelled;
                 if let Some(last) = events.last_mut() {
@@ -576,7 +582,14 @@ impl PipelineEngine {
             .tokenizer
             .encode_chat(None, prompt)
             .map_err(EngineError::from)?;
-        self.generate_from_tokens(&token_ids, params, &[], RequestId::new(), |_| {}, should_continue)
+        self.generate_from_tokens(
+            &token_ids,
+            params,
+            &[],
+            RequestId::new(),
+            |_| {},
+            should_continue,
+        )
     }
 
     fn run_prefill(
@@ -644,13 +657,16 @@ mod tests {
     use std::path::PathBuf;
 
     fn smoke_root() -> Option<PathBuf> {
-        if std::env::var_os("MESH_P09_SMOKE").is_none() && std::env::var_os("MESH_P07_SMOKE").is_none()
+        if std::env::var_os("MESH_P09_SMOKE").is_none()
+            && std::env::var_os("MESH_P07_SMOKE").is_none()
         {
             return None;
         }
         let root = std::env::var_os("MESH_P07_DATA_DIR")
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("mesh-p07-smoke")))?;
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join("mesh-p07-smoke"))
+            })?;
         if root.join("model-cache").is_dir() {
             Some(root)
         } else {
@@ -660,8 +676,7 @@ mod tests {
 
     fn weight_files(root: &Path) -> Vec<WeightFile> {
         let mut files = Vec::new();
-        let objects = root
-            .join("model-cache/objects/huggingface");
+        let objects = root.join("model-cache/objects/huggingface");
         for path in walkdir_files(&objects) {
             files.push(WeightFile {
                 artifact_path: path
@@ -728,8 +743,8 @@ mod tests {
             root.display()
         );
         let config = config_path(&root);
-        let tokenizer = MeshTokenizer::load(&tokenizer_path(&root), "", QWEN3_EOS_TOKEN_ID)
-            .expect("tokenizer");
+        let tokenizer =
+            MeshTokenizer::load(&tokenizer_path(&root), "", QWEN3_EOS_TOKEN_ID).expect("tokenizer");
         let prompt_tokens = tokenizer.encode_chat(None, "Say hi").expect("encode");
         let params = SamplingParams {
             temperature: 0.0,
@@ -767,10 +782,7 @@ mod tests {
         };
 
         let deployment_id = DeploymentId::from_bytes([9; 16]);
-        let nodes = [
-            NodeId::from_bytes([1; 32]),
-            NodeId::from_bytes([2; 32]),
-        ];
+        let nodes = [NodeId::from_bytes([1; 32]), NodeId::from_bytes([2; 32])];
         let placement = PlacementPlan::split_even(deployment_id, "Qwen/Qwen3-4B", 36, &nodes)
             .expect("placement");
         let mut stages = Vec::new();
@@ -815,14 +827,8 @@ mod tests {
             "two-stage tokens {:?} != complete {:?}",
             pipeline_tokens, complete_tokens
         );
-        assert!(matches!(
-            pipeline.stages[0].role,
-            StageRole::First
-        ));
-        assert!(matches!(
-            pipeline.stages[1].role,
-            StageRole::Final
-        ));
+        assert!(matches!(pipeline.stages[0].role, StageRole::First));
+        assert!(matches!(pipeline.stages[1].role, StageRole::Final));
         eprintln!(
             "P09 two-stage match ok backend={} tokens={:?} text={:?}",
             pipeline.stages[0].backend().as_str(),
@@ -836,9 +842,13 @@ mod tests {
         let mut queue = BoundedQueue::new(2);
         queue.push(1).unwrap();
         queue.push(2).unwrap();
-        assert!(queue.push(3).unwrap_err().to_string().contains("queue full"));
+        assert!(
+            queue
+                .push(3)
+                .unwrap_err()
+                .to_string()
+                .contains("queue full")
+        );
         assert_eq!(queue.pop(), Some(1));
     }
 }
-
-

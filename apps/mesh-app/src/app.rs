@@ -2,7 +2,6 @@ use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Theme, Ui, Vec
 use mesh_core::{AppScreen, ModelReference, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot};
 use mesh_node::NodeHandle;
 
-
 pub struct MeshApp {
     handle: NodeHandle,
     snapshots: tokio::sync::watch::Receiver<UiSnapshot>,
@@ -201,7 +200,6 @@ impl MeshApp {
             || snapshot.enrollment.error.is_some()
             || snapshot.enrollment.recovery.is_some()
         {
-
             ui.add_space(16.0);
             card(ui, |ui| {
                 ui.heading("Progress");
@@ -490,14 +488,15 @@ impl MeshApp {
             kv(
                 ui,
                 "Selected",
-                models
-                    .selected_model
-                    .as_deref()
-                    .unwrap_or("none"),
+                models.selected_model.as_deref().unwrap_or("none"),
             );
             if let Some(identity) = &models.resolved_identity {
                 kv(ui, "Revision", &identity.revision);
-                kv(ui, "Manifest", &identity.manifest_hash[..identity.manifest_hash.len().min(16)]);
+                kv(
+                    ui,
+                    "Manifest",
+                    &identity.manifest_hash[..identity.manifest_hash.len().min(16)],
+                );
             }
             kv(ui, "Status", &models.status_line);
             if let Some(progress) = &models.progress {
@@ -635,11 +634,7 @@ impl MeshApp {
                 "Model",
                 inference.model_line.as_deref().unwrap_or("none"),
             );
-            kv(
-                ui,
-                "Backend",
-                inference.backend.as_deref().unwrap_or("—"),
-            );
+            kv(ui, "Backend", inference.backend.as_deref().unwrap_or("—"));
             kv(
                 ui,
                 "Routed to",
@@ -702,13 +697,20 @@ impl MeshApp {
                 ui.label("max tokens");
                 ui.add(egui::DragValue::new(&mut self.max_new_tokens).range(1..=512));
                 ui.label("temperature");
-                ui.add(egui::DragValue::new(&mut self.temperature).range(0.0..=2.0).speed(0.05));
+                ui.add(
+                    egui::DragValue::new(&mut self.temperature)
+                        .range(0.0..=2.0)
+                        .speed(0.05),
+                );
                 ui.label("seed");
                 ui.add(egui::DragValue::new(&mut self.seed));
             });
             let can_generate = !inference.busy
                 && (inference.model_line.is_some()
-                    || inference.replicas.iter().any(|replica| replica.can_accept()));
+                    || inference
+                        .replicas
+                        .iter()
+                        .any(|replica| replica.can_accept()));
             if ui
                 .add_enabled(can_generate, egui::Button::new("Generate"))
                 .clicked()

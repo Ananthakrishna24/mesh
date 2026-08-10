@@ -7,9 +7,9 @@ use mesh_core::protocol::proto::{
     control_envelope::Body,
 };
 use mesh_core::{
-    DeploymentId, GpuResourceAmount, LocalIdentity, ReservationCommit, ReservationId,
-    ReservationRelease, ReserveAccepted, ReserveRejected, ReserveRequest, ResourceAmount,
-    ResourceOffer, ResourceQuery, PROTOCOL_MAJOR, PROTOCOL_MINOR, random_message_id,
+    DeploymentId, GpuResourceAmount, LocalIdentity, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    ReservationCommit, ReservationId, ReservationRelease, ReserveAccepted, ReserveRejected,
+    ReserveRequest, ResourceAmount, ResourceOffer, ResourceQuery, random_message_id,
 };
 
 use crate::{NetError, NetResult};

@@ -147,7 +147,10 @@ pub const DEFAULT_BANDWIDTH_PAYLOAD_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_BANDWIDTH_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024;
 pub const MIN_BANDWIDTH_PAYLOAD_BYTES: u64 = 256 * 1024;
 
-pub fn measurement_age_state(measured_at_unix_ms: Option<i64>, now_unix_ms: i64) -> MeasurementAgeState {
+pub fn measurement_age_state(
+    measured_at_unix_ms: Option<i64>,
+    now_unix_ms: i64,
+) -> MeasurementAgeState {
     let Some(measured_at_unix_ms) = measured_at_unix_ms else {
         return MeasurementAgeState::Missing;
     };
@@ -275,12 +278,19 @@ mod tests {
             measurement_age_state(Some(now - 40 * 60_000), now),
             MeasurementAgeState::Expired
         );
-        assert_eq!(measurement_age_state(None, now), MeasurementAgeState::Missing);
+        assert_eq!(
+            measurement_age_state(None, now),
+            MeasurementAgeState::Missing
+        );
     }
 
     #[test]
     fn pipeline_hop_thresholds() {
-        assert!(!pipeline_hop_rejects(Some(20.0), Some(50_000_000), Some(90)));
+        assert!(!pipeline_hop_rejects(
+            Some(20.0),
+            Some(50_000_000),
+            Some(90)
+        ));
         assert!(pipeline_hop_rejects(Some(90.0), Some(50_000_000), Some(90)));
         assert!(pipeline_hop_rejects(Some(20.0), Some(5_000_000), Some(90)));
         assert!(pipeline_hop_rejects(Some(20.0), Some(50_000_000), Some(40)));

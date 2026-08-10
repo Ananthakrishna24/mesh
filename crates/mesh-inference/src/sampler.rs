@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
 
 use mesh_core::{SamplingParams, StopReason};
+use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
-use rand::Rng;
 
 #[derive(Debug, Clone)]
 pub struct Sampler {
@@ -211,10 +211,12 @@ fn apply_top_p(probs: &mut [f32], top_p: f32) -> Result<(), String> {
     if indexed.is_empty() {
         return Err("top-p received empty distribution".to_owned());
     }
-    indexed.sort_by(|left, right| match right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal) {
-        Ordering::Equal => left.0.cmp(&right.0),
-        other => other,
-    });
+    indexed.sort_by(
+        |left, right| match right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal) {
+            Ordering::Equal => left.0.cmp(&right.0),
+            other => other,
+        },
+    );
     let mut cumulative = 0.0f32;
     let mut keep_count = 0usize;
     for (_, prob) in &indexed {
@@ -278,15 +280,13 @@ mod tests {
             max_new_tokens: 4,
         };
         let prompt = vec![1u32, 2, 3];
-        let mut sampler =
-            Sampler::new(params, 8, 7, Vec::new(), 64, &prompt).expect("sampler");
+        let mut sampler = Sampler::new(params, 8, 7, Vec::new(), 64, &prompt).expect("sampler");
         let logits = vec![0.1, 0.2, 5.0, 0.4, 0.0, -1.0, 1.0, 0.3];
         let first = sampler.sample(&logits).expect("sample");
         assert_eq!(first.token_id, 2);
         assert!(!first.is_last);
 
-        let mut sampler2 =
-            Sampler::new(params, 8, 7, Vec::new(), 64, &prompt).expect("sampler");
+        let mut sampler2 = Sampler::new(params, 8, 7, Vec::new(), 64, &prompt).expect("sampler");
         let second = sampler2.sample(&logits).expect("sample");
         assert_eq!(first, second);
     }

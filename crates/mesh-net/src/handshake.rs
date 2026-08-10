@@ -7,8 +7,8 @@ use mesh_core::protocol::proto::{
     control_envelope::Body,
 };
 use mesh_core::{
-    EndpointCandidate, EnrollmentId, LocalIdentity, MeshId, NodeId, PeerRecord, PROTOCOL_MAJOR,
-    PROTOCOL_MINOR, PROTOCOL_MINOR_MIN, capability_digest, random_message_id,
+    EndpointCandidate, EnrollmentId, LocalIdentity, MeshId, NodeId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    PROTOCOL_MINOR_MIN, PeerRecord, capability_digest, random_message_id,
 };
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::time::timeout;

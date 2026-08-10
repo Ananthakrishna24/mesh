@@ -1,5 +1,5 @@
-mod benchmark;
 mod activation;
+mod benchmark;
 mod candidates;
 mod endpoint;
 mod error;
@@ -7,17 +7,21 @@ mod frame;
 mod handshake;
 mod holepunch;
 mod identity;
-mod mapping;
 mod inference;
+mod mapping;
 mod reservation;
 mod session;
 mod tls;
 
+pub use activation::{
+    ActivationFrame, ActivationReceiveContext, read_activation_frame,
+    send_activation_on_connection, validate_activation_for_request, write_activation_frame,
+};
 pub use benchmark::{
     BandwidthBenchmarkOutcome, DelayBenchmarkOutcome, build_capability_envelope,
-    capability_from_proto, capability_to_proto, default_bandwidth_payload, run_bandwidth_receive,
-    run_bandwidth_send, run_delay_benchmark, respond_bandwidth_receive, respond_bandwidth_send,
-    respond_delay_benchmark, summarize_delay_samples,
+    capability_from_proto, capability_to_proto, default_bandwidth_payload,
+    respond_bandwidth_receive, respond_bandwidth_send, respond_delay_benchmark,
+    run_bandwidth_receive, run_bandwidth_send, run_delay_benchmark, summarize_delay_samples,
 };
 pub use candidates::{
     advertised_candidates, collect_local_candidates, collect_local_candidates_at,
@@ -35,19 +39,15 @@ pub use holepunch::{
     send_udp_probes, start_at_after, wait_until_unix_ms, write_control,
 };
 pub use identity::generate_node_certificate;
-pub use mapping::{
-    MAPPING_BUDGET, MAPPING_LIFETIME_SECS, MappingProtocol, MappingResult, RouterMappingHandle,
-    attempt_router_mapping, discover_ipv4_gateway_and_local,
-};
-pub use activation::{
-    send_activation_on_connection, validate_activation_for_request, write_activation_frame,
-    ActivationFrame, ActivationReceiveContext, read_activation_frame,
-};
 pub use inference::{
     ReplicaStatusMessage, build_cancel_request_envelope, build_inference_request_envelope,
     build_next_token_feedback_envelope, build_replica_status_envelope, build_token_result_envelope,
     cancel_request_from_proto, inference_request_from_proto, next_token_feedback_from_proto,
     replica_status_from_proto, token_result_from_proto,
+};
+pub use mapping::{
+    MAPPING_BUDGET, MAPPING_LIFETIME_SECS, MappingProtocol, MappingResult, RouterMappingHandle,
+    attempt_router_mapping, discover_ipv4_gateway_and_local,
 };
 pub use reservation::{
     build_reservation_commit_envelope, build_reservation_release_envelope,
@@ -55,7 +55,6 @@ pub use reservation::{
     build_reserve_request_envelope, build_resource_offer_envelope, build_resource_query_envelope,
 };
 pub use session::{SessionCommand, SessionEvent, run_connected_session};
-
 
 #[cfg(test)]
 mod tests {
@@ -123,9 +122,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut joiner_endpoint =
-            MeshEndpoint::bind(joiner_identity.clone(), SocketAddr::from(([127, 0, 0, 1], 0)))
-                .expect("bind joiner");
+        let mut joiner_endpoint = MeshEndpoint::bind(
+            joiner_identity.clone(),
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .expect("bind joiner");
         let joiner_candidates = collect_local_candidates(joiner_endpoint.listen_addr());
         let connected = joiner_endpoint
             .connect(listen, inviter_identity.node_id)
@@ -249,9 +250,11 @@ mod tests {
         });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let mut right_endpoint =
-            MeshEndpoint::bind(right_identity.clone(), SocketAddr::from(([127, 0, 0, 1], 0)))
-                .expect("bind right");
+        let mut right_endpoint = MeshEndpoint::bind(
+            right_identity.clone(),
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+        )
+        .expect("bind right");
         let right_candidates = collect_local_candidates(right_endpoint.listen_addr());
         let connected = right_endpoint
             .connect(listen, left_identity.node_id)
@@ -338,12 +341,14 @@ mod tests {
 
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .expect("pre-bind server udp socket");
-        let bound_port = server_socket.local_addr().expect("server local addr").port();
+        let bound_port = server_socket
+            .local_addr()
+            .expect("server local addr")
+            .port();
         assert_ne!(bound_port, 0);
 
-        let server_endpoint =
-            MeshEndpoint::from_udp_socket(server_identity.clone(), server_socket)
-                .expect("server endpoint from pre-bound socket");
+        let server_endpoint = MeshEndpoint::from_udp_socket(server_identity.clone(), server_socket)
+            .expect("server endpoint from pre-bound socket");
         assert_eq!(server_endpoint.listen_addr().port(), bound_port);
 
         let accept = tokio::spawn({

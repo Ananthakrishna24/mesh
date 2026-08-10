@@ -17,30 +17,39 @@ pub fn collect_local_candidates_at(
     observed_at_unix_ms: i64,
 ) -> Vec<EndpointCandidate> {
     let port = listen_addr.port();
+    let supports_ipv4 = listen_addr.is_ipv4() || listen_addr.ip().is_unspecified();
+    let supports_ipv6 = listen_addr.is_ipv6();
     let mut candidates = Vec::new();
     let mut seen = BTreeSet::new();
 
-    push_unique(
-        &mut candidates,
-        &mut seen,
-        EndpointCandidate::new_at(
-            CandidateKind::LocalNetwork,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
-            observed_at_unix_ms,
-        ),
-    );
-    push_unique(
-        &mut candidates,
-        &mut seen,
-        EndpointCandidate::new_at(
-            CandidateKind::LocalNetwork,
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
-            observed_at_unix_ms,
-        ),
-    );
+    if supports_ipv4 {
+        push_unique(
+            &mut candidates,
+            &mut seen,
+            EndpointCandidate::new_at(
+                CandidateKind::LocalNetwork,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                observed_at_unix_ms,
+            ),
+        );
+    }
+    if supports_ipv6 {
+        push_unique(
+            &mut candidates,
+            &mut seen,
+            EndpointCandidate::new_at(
+                CandidateKind::LocalNetwork,
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                observed_at_unix_ms,
+            ),
+        );
+    }
 
     for ip in interface_addresses() {
         let ip = normalize_bind_ip(ip);
+        if (ip.is_ipv4() && !supports_ipv4) || (ip.is_ipv6() && !supports_ipv6) {
+            continue;
+        }
         if matches!(ip, IpAddr::V4(v4) if v4.is_loopback())
             || matches!(ip, IpAddr::V6(v6) if v6.is_loopback())
         {
@@ -228,15 +237,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn collects_loopback_and_sorts() {
-        let candidates = collect_local_candidates(SocketAddr::from(([0, 0, 0, 0], 4_444)));
+    fn candidates_match_bound_address_families() {
+        let ipv4 = collect_local_candidates(SocketAddr::from(([0, 0, 0, 0], 4_444)));
+        assert!(ipv4.iter().all(|candidate| candidate.address.is_ipv4()));
         assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate.address.ip().is_loopback())
+            ipv4.windows(2)
+                .all(|pair| { pair[0].kind.priority() >= pair[1].kind.priority() })
         );
-        assert!(candidates.windows(2).all(|pair| {
-            pair[0].kind.priority() >= pair[1].kind.priority()
+
+        let dual_stack = collect_local_candidates(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 4_444)));
+        assert!(dual_stack.iter().any(|candidate| {
+            candidate.address == SocketAddr::from((Ipv4Addr::LOCALHOST, 4_444))
+        }));
+        assert!(dual_stack.iter().any(|candidate| {
+            candidate.address == SocketAddr::from((Ipv6Addr::LOCALHOST, 4_444))
         }));
     }
 }

@@ -90,11 +90,9 @@ impl ActivationHeader {
         let rank = 3;
         let dimensions = [batch, sequence, hidden, 0];
         let element_count = checked_product(&dimensions[..rank as usize])?;
-        let payload_len = element_count
-            .checked_mul(ACTIVATION_BYTES_PER_FP16)
-            .ok_or(ActivationValidationError::MalformedFrame(
-                "payload length overflow",
-            ))?;
+        let payload_len = element_count.checked_mul(ACTIVATION_BYTES_PER_FP16).ok_or(
+            ActivationValidationError::MalformedFrame("payload length overflow"),
+        )?;
         let header = Self {
             wire_major: ACTIVATION_WIRE_MAJOR,
             wire_minor: ACTIVATION_WIRE_MINOR,
@@ -132,7 +130,9 @@ impl ActivationHeader {
             ));
         }
         if self.rank == 0 || self.rank > ACTIVATION_MAX_RANK {
-            return Err(ActivationValidationError::MalformedFrame("rank out of range"));
+            return Err(ActivationValidationError::MalformedFrame(
+                "rank out of range",
+            ));
         }
         if self.data_type != ACTIVATION_DTYPE_FP16 {
             return Err(ActivationValidationError::TransferRejected(
@@ -225,9 +225,8 @@ impl ActivationHeader {
             return Err(ActivationValidationError::UnsupportedProtocol(wire_major));
         }
         let wire_minor = u16::from_be_bytes([bytes[6], bytes[7]]);
-        let deployment_id = DeploymentId::from_slice(&bytes[8..24]).map_err(|_| {
-            ActivationValidationError::MalformedFrame("invalid deployment id")
-        })?;
+        let deployment_id = DeploymentId::from_slice(&bytes[8..24])
+            .map_err(|_| ActivationValidationError::MalformedFrame("invalid deployment id"))?;
         let request_id = RequestId::from_slice(&bytes[24..40])
             .map_err(|_| ActivationValidationError::MalformedFrame("invalid request id"))?;
         let transfer_id = u64::from_be_bytes(bytes[40..48].try_into().unwrap());
@@ -242,8 +241,7 @@ impl ActivationHeader {
         let mut dimensions = [0u64; 4];
         for index in 0..4 {
             let start = 56 + index * 8;
-            dimensions[index] =
-                u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap());
+            dimensions[index] = u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap());
         }
         let sequence_position = u64::from_be_bytes(bytes[88..96].try_into().unwrap());
         let payload_len = u64::from_be_bytes(bytes[96..104].try_into().unwrap());

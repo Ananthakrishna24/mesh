@@ -3,8 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use mesh_core::protocol::proto::{
-    ControlEnvelope, IntroductionOffer, IntroductionReady, PeerObserve,
-    control_envelope::Body,
+    ControlEnvelope, IntroductionOffer, IntroductionReady, PeerObserve, control_envelope::Body,
 };
 use mesh_core::{
     CandidateKind, EndpointCandidate, LocalIdentity, NodeId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
@@ -98,10 +97,7 @@ pub fn build_peer_observe(
     }
 }
 
-pub fn peer_observed_candidate(
-    address: SocketAddr,
-    source_node_id: NodeId,
-) -> EndpointCandidate {
+pub fn peer_observed_candidate(address: SocketAddr, source_node_id: NodeId) -> EndpointCandidate {
     EndpointCandidate::new(CandidateKind::PeerObserved, address).with_source(source_node_id)
 }
 

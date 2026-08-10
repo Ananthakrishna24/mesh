@@ -1,7 +1,7 @@
 use mesh_core::{
-    ActivationHeader, ActivationValidationError, DeploymentId, RequestId,
     ACTIVATION_HEADER_BYTES, ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST,
-    ACTIVATION_MAX_PAYLOAD_BYTES,
+    ACTIVATION_MAX_PAYLOAD_BYTES, ActivationHeader, ActivationValidationError, DeploymentId,
+    RequestId,
 };
 use quinn::{Connection, RecvStream, SendStream};
 
@@ -61,7 +61,8 @@ pub async fn write_activation_frame(
     let encoded = header.encode().map_err(activation_error_to_net)?;
     send.write_all(&encoded).await?;
     send.write_all(payload).await?;
-    send.finish().map_err(|error| NetError::Protocol(error.to_string()))?;
+    send.finish()
+        .map_err(|error| NetError::Protocol(error.to_string()))?;
     Ok(())
 }
 
@@ -151,7 +152,6 @@ pub fn validate_activation_for_request(
     ctx.queued_count = ctx.queued_count.saturating_add(1);
     Ok(())
 }
-
 
 fn activation_error_to_net(error: ActivationValidationError) -> NetError {
     NetError::Protocol(error.to_string())

@@ -18,7 +18,6 @@ pub const MAPPING_BUDGET: Duration = Duration::from_secs(6);
 #[allow(dead_code)]
 pub const RENEW_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MappingProtocol {
     Pcp,
@@ -108,8 +107,7 @@ impl RouterMappingHandle {
                     protocol: protocol_from_mapping(mapping),
                     local_lan: self.result.local_lan,
                     gateway: self.result.gateway,
-                    expires_at_unix_ms: observed_at_unix_ms
-                        + i64::from(lifetime_secs) * 1_000,
+                    expires_at_unix_ms: observed_at_unix_ms + i64::from(lifetime_secs) * 1_000,
                     observed_at_unix_ms,
                 };
                 Ok(self.result.clone())
@@ -455,7 +453,6 @@ fn parse_proc_ipv4(value: &str) -> Option<Ipv4Addr> {
 pub fn mapping_deadline_remaining(started: Instant, budget: Duration) -> Option<Duration> {
     budget.checked_sub(started.elapsed())
 }
-
 
 #[cfg(test)]
 mod tests {

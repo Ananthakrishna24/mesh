@@ -299,8 +299,7 @@ pub fn is_full_commit_sha(value: &str) -> bool {
 }
 
 pub fn volume_reserve_floor(disk_total_bytes: u64) -> u64 {
-    let ratio = disk_total_bytes
-        .saturating_mul(CACHE_VOLUME_RESERVE_RATIO_NUM)
+    let ratio = disk_total_bytes.saturating_mul(CACHE_VOLUME_RESERVE_RATIO_NUM)
         / CACHE_VOLUME_RESERVE_RATIO_DEN;
     CACHE_VOLUME_RESERVE_BYTES.max(ratio)
 }
@@ -336,7 +335,9 @@ mod tests {
             "0123456789abcdef0123456789abcdef01234567"
         ));
         assert!(!is_full_commit_sha("main"));
-        assert!(!is_full_commit_sha("0123456789abcdef0123456789abcdef0123456"));
+        assert!(!is_full_commit_sha(
+            "0123456789abcdef0123456789abcdef0123456"
+        ));
         assert!(!is_full_commit_sha(
             "0123456789ABCDEF0123456789abcdef01234567"
         ));

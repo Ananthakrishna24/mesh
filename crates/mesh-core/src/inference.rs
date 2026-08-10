@@ -13,7 +13,6 @@ pub const WARMUP_MAX_NEW_TOKENS: u32 = 8;
 pub const KV_BYTES_PER_ELEMENT: u64 = 2;
 pub const MAX_PIPELINE_STAGES: usize = 3;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StopReason {
     Eos,
@@ -102,9 +101,17 @@ impl SamplingParams {
         }
     }
 
-    pub fn validate(&self, prompt_len: u32, context_limit: u32, vocab_size: u32) -> Result<(), String> {
+    pub fn validate(
+        &self,
+        prompt_len: u32,
+        context_limit: u32,
+        vocab_size: u32,
+    ) -> Result<(), String> {
         if !(0.0..=2.0).contains(&self.temperature) {
-            return Err(format!("temperature {} out of range 0..=2", self.temperature));
+            return Err(format!(
+                "temperature {} out of range 0..=2",
+                self.temperature
+            ));
         }
         if self.top_k != 0 && !(1..=vocab_size).contains(&self.top_k) {
             return Err(format!("top_k {} out of range", self.top_k));
@@ -465,25 +472,15 @@ pub fn select_replica_route<'a>(
                     u8::from(!replica.local),
                     replica.node_id.as_str(),
                 );
-                if right < left {
-                    replica
-                } else {
-                    current
-                }
+                if right < left { replica } else { current }
             }
         });
     }
     best
 }
 
-pub fn per_layer_kv_bytes(
-    batch: u32,
-    num_kv_heads: u32,
-    seq_capacity: u32,
-    head_dim: u32,
-) -> u64 {
-    2u64
-        .saturating_mul(u64::from(batch))
+pub fn per_layer_kv_bytes(batch: u32, num_kv_heads: u32, seq_capacity: u32, head_dim: u32) -> u64 {
+    2u64.saturating_mul(u64::from(batch))
         .saturating_mul(u64::from(num_kv_heads))
         .saturating_mul(u64::from(seq_capacity))
         .saturating_mul(u64::from(head_dim))
@@ -608,7 +605,10 @@ mod tests {
         assert_eq!(plan.stages[0].role, StageRole::First);
         assert_eq!(plan.stages[0].layer_range, LayerRange { start: 0, end: 18 });
         assert_eq!(plan.stages[1].role, StageRole::Final);
-        assert_eq!(plan.stages[1].layer_range, LayerRange { start: 18, end: 36 });
+        assert_eq!(
+            plan.stages[1].layer_range,
+            LayerRange { start: 18, end: 36 }
+        );
         plan.validate().unwrap();
     }
 
@@ -633,7 +633,10 @@ mod tests {
                 },
             ],
         };
-        assert!(plan.validate().unwrap_err().contains("must start at layer 1"));
+        assert!(
+            plan.validate()
+                .unwrap_err()
+                .contains("must start at layer 1")
+        );
     }
-
 }

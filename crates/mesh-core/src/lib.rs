@@ -1,16 +1,22 @@
+mod activation;
 mod error;
 mod hardware;
-mod ids;
 mod identity;
+mod ids;
+mod inference;
 pub mod invite;
+mod model;
 mod peer;
 pub mod protocol;
 mod resource;
-mod model;
-mod inference;
-mod activation;
 mod ui;
 
+pub use activation::{
+    ACTIVATION_BYTES_PER_FP16, ACTIVATION_DTYPE_FP16, ACTIVATION_HEADER_BYTES, ACTIVATION_MAGIC,
+    ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST, ACTIVATION_MAX_PAYLOAD_BYTES, ACTIVATION_MAX_RANK,
+    ACTIVATION_WIRE_MAJOR, ACTIVATION_WIRE_MINOR, ActivationHeader, ActivationValidationError,
+    TransferKind,
+};
 pub use error::{CoreError, CoreResult};
 pub use hardware::{
     BANDWIDTH_REJECT_BPS, BandwidthMeasurement, CapabilityReport, ComputeProxy,
@@ -20,11 +26,29 @@ pub use hardware::{
     STABILITY_PIPELINE_MIN, age_bandwidth_bps, age_delay_ms, format_bits_per_second, format_bytes,
     measurement_age_state, pipeline_hop_rejects, stability_score,
 };
-pub use ids::{DeploymentId, EnrollmentId, MeshId, NodeId, RequestId, ReservationId};
 pub use identity::{LocalIdentity, identity_matches};
+pub use ids::{DeploymentId, EnrollmentId, MeshId, NodeId, RequestId, ReservationId};
+pub use inference::{
+    DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
+    DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
+    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, LayerRange, MAX_PIPELINE_STAGES,
+    NextTokenFeedback, PlacementPlan, ReplicaEndpointView, ReplicaHealth, SamplingParams,
+    StageAssignment, StageRole, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS,
+    per_layer_kv_bytes, request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
+};
 pub use invite::{
     INVITE_PREFIX, InvitationText, build_invite, candidates_from_proto, candidates_to_proto,
     decode_invitation_text, encode_invitation_text, secret_digest, validate_invite,
+};
+pub use model::{
+    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, CACHE_VOLUME_RESERVE_BYTES,
+    CACHE_VOLUME_RESERVE_RATIO_DEN, CACHE_VOLUME_RESERVE_RATIO_NUM, CacheValidationState,
+    DEFAULT_CACHE_MAX_BYTES, DISK_PREPARE_MARGIN_BYTES, ETAG_REVALIDATE_MS,
+    MAX_SAFETENSORS_HEADER_BYTES, ModelCacheEntry, ModelCacheView, ModelDownloadProgress,
+    ModelFormat, ModelIdentity, ModelManifestRecord, ModelReference, ModelStoreView,
+    PARTIAL_GRACE_MS, PROVIDER_HUGGINGFACE, ProviderAccessReport, ProviderAccessStatus,
+    ProviderAuthMode, RANGE_MERGE_GAP_BYTES, is_full_commit_sha, manifest_cache_key,
+    prepare_disk_margin, short_revision, volume_reserve_floor,
 };
 pub use peer::{
     CandidateKind, CandidateReachability, EndpointCandidate, InvitationRecord, InvitationState,
@@ -37,39 +61,14 @@ pub use protocol::{
     now_unix_ms, proto, random_message_id,
 };
 pub use resource::{
-    DEFAULT_COMMIT_LEASE_MS, DEFAULT_HOLD_LEASE_MS, GpuResourceAmount, LocalReservation, MAX_LEASE_MS,
-    MIN_LEASE_MS, OFFER_TTL_MS, ReservationCommit, ReservationRelease, ReservationState,
-    ReservationSummaryView, ReserveAccepted, ReserveRejected, ReserveRequest, ResourceAmount,
-    ResourceCapacity, ResourceManagerView, ResourceOffer, ResourceQuery, clamp_lease_ms,
-    current_time_ms, offer_expiry,
-};
-pub use model::{
-    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, CACHE_VOLUME_RESERVE_BYTES,
-    CACHE_VOLUME_RESERVE_RATIO_DEN, CACHE_VOLUME_RESERVE_RATIO_NUM, CacheValidationState,
-    DEFAULT_CACHE_MAX_BYTES, DISK_PREPARE_MARGIN_BYTES, ETAG_REVALIDATE_MS, MAX_SAFETENSORS_HEADER_BYTES,
-    ModelCacheEntry, ModelCacheView, ModelDownloadProgress, ModelFormat, ModelIdentity,
-    ModelManifestRecord, ModelReference, ModelStoreView, PARTIAL_GRACE_MS, PROVIDER_HUGGINGFACE,
-    ProviderAccessReport, ProviderAccessStatus, ProviderAuthMode, RANGE_MERGE_GAP_BYTES,
-    is_full_commit_sha, manifest_cache_key, prepare_disk_margin, short_revision,
-    volume_reserve_floor,
-};
-pub use activation::{
-    ActivationHeader, ActivationValidationError, TransferKind, ACTIVATION_BYTES_PER_FP16,
-    ACTIVATION_DTYPE_FP16, ACTIVATION_HEADER_BYTES, ACTIVATION_MAGIC,
-    ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST, ACTIVATION_MAX_PAYLOAD_BYTES, ACTIVATION_MAX_RANK,
-    ACTIVATION_WIRE_MAJOR, ACTIVATION_WIRE_MINOR,
-};
-pub use inference::{
-    DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
-    DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
-    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, LayerRange, MAX_PIPELINE_STAGES,
-    NextTokenFeedback, PlacementPlan, ReplicaEndpointView, ReplicaHealth, SamplingParams,
-    StageAssignment, StageRole, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS,
-    per_layer_kv_bytes, request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
+    DEFAULT_COMMIT_LEASE_MS, DEFAULT_HOLD_LEASE_MS, GpuResourceAmount, LocalReservation,
+    MAX_LEASE_MS, MIN_LEASE_MS, OFFER_TTL_MS, ReservationCommit, ReservationRelease,
+    ReservationState, ReservationSummaryView, ReserveAccepted, ReserveRejected, ReserveRequest,
+    ResourceAmount, ResourceCapacity, ResourceManagerView, ResourceOffer, ResourceQuery,
+    clamp_lease_ms, current_time_ms, offer_expiry,
 };
 
 pub use ui::{
     AppScreen, ConnectivityRecovery, EnrollmentProgress, HardwareSummaryView, LinkSummaryView,
     LocalNodeSummary, ManualForwardingGuide, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot,
 };
-

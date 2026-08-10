@@ -1,6 +1,4 @@
-use mesh_core::{
-    CacheValidationState, ModelCacheEntry, ModelFormat, ModelManifestRecord,
-};
+use mesh_core::{CacheValidationState, ModelCacheEntry, ModelFormat, ModelManifestRecord};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{StoreError, StoreResult};
@@ -127,10 +125,7 @@ pub fn upsert_cache_entry(conn: &Connection, entry: &ModelCacheEntry) -> StoreRe
     Ok(())
 }
 
-pub fn get_cache_entry(
-    conn: &Connection,
-    entry_id: &str,
-) -> StoreResult<Option<ModelCacheEntry>> {
+pub fn get_cache_entry(conn: &Connection, entry_id: &str) -> StoreResult<Option<ModelCacheEntry>> {
     conn.query_row(
         r#"
         SELECT entry_id, provider, repository, revision, artifact_path, relative_path,
@@ -209,12 +204,8 @@ fn decode_cache_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelCacheEnt
         artifact_path: row.get(4)?,
         relative_path: row.get(5)?,
         byte_length: row.get::<_, i64>(6)? as u64,
-        range_start: row
-            .get::<_, Option<i64>>(7)?
-            .map(|value| value as u64),
-        range_end: row
-            .get::<_, Option<i64>>(8)?
-            .map(|value| value as u64),
+        range_start: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+        range_end: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
         etag: row.get(9)?,
         digest_hex: row.get(10)?,
         dtype: row.get(11)?,

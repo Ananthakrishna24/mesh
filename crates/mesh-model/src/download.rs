@@ -14,7 +14,9 @@ use crate::cache::{
 };
 use crate::huggingface::HuggingFaceProvider;
 use crate::manifest::{CanonicalManifest, TensorRecord};
-use crate::provider::{ArtifactRef, NodeModelPlan, PreparedArtifact, ResolvedModel, TensorAssignment};
+use crate::provider::{
+    ArtifactRef, NodeModelPlan, PreparedArtifact, ResolvedModel, TensorAssignment,
+};
 use crate::safetensors::{
     SafetensorsDtype, default_merge_ranges, dtype_width_bytes, parse_header_length,
     parse_safetensors_header, tensor_payload_absolute_range,
@@ -87,7 +89,6 @@ pub struct PrepareResult {
     pub bytes_from_cache: u64,
     pub summary: String,
 }
-
 
 pub fn build_complete_plan(
     deployment_id: impl Into<String>,
@@ -177,9 +178,8 @@ pub fn build_layer_plan(
             None => {
                 let include = match tensor.role {
                     crate::manifest::TensorRole::Embedding => include_embeddings,
-                    crate::manifest::TensorRole::FinalNorm | crate::manifest::TensorRole::LmHead => {
-                        include_final
-                    }
+                    crate::manifest::TensorRole::FinalNorm
+                    | crate::manifest::TensorRole::LmHead => include_final,
                     crate::manifest::TensorRole::Layer => false,
                     crate::manifest::TensorRole::Other => include_embeddings || include_final,
                 };
@@ -214,11 +214,9 @@ pub fn build_layer_plan(
     })
 }
 
-pub fn stage_plan_flags(
-    role: mesh_core::StageRole,
-    tie_word_embeddings: bool,
-) -> (bool, bool) {
-    let include_embeddings = role.owns_embeddings() || (role.owns_output_head() && tie_word_embeddings);
+pub fn stage_plan_flags(role: mesh_core::StageRole, tie_word_embeddings: bool) -> (bool, bool) {
+    let include_embeddings =
+        role.owns_embeddings() || (role.owns_output_head() && tie_word_embeddings);
     let include_final = role.owns_output_head();
     (include_embeddings, include_final)
 }
@@ -416,10 +414,7 @@ pub fn materialize_stage_weight_files(
                 && cache_root.join(&cover.relative_path).is_file()
         });
         if let Some(cover) = whole {
-            out.push((
-                artifact_path,
-                cache_root.join(&cover.relative_path),
-            ));
+            out.push((artifact_path, cache_root.join(&cover.relative_path)));
             continue;
         }
 
@@ -559,7 +554,9 @@ pub fn net_disk_bytes_required(
     {
         if let Some(entry) = find_covering_entry(entries, assignment) {
             if validate_entry_file(root, entry).unwrap_or(false) {
-                let covered = assignment.absolute_end.saturating_sub(assignment.absolute_start);
+                let covered = assignment
+                    .absolute_end
+                    .saturating_sub(assignment.absolute_start);
                 remaining = remaining.saturating_sub(covered);
             }
         }
@@ -606,8 +603,11 @@ pub async fn prepare_plan(
     {
         if let Some(entry) = find_covering_entry(existing, assignment) {
             if validate_entry_file(cache_root, entry).unwrap_or(false) {
-                bytes_from_cache = bytes_from_cache
-                    .saturating_add(assignment.absolute_end.saturating_sub(assignment.absolute_start));
+                bytes_from_cache = bytes_from_cache.saturating_add(
+                    assignment
+                        .absolute_end
+                        .saturating_sub(assignment.absolute_start),
+                );
                 prepared.push(PreparedArtifact {
                     entry_id: entry.entry_id.clone(),
                     relative_path: PathBuf::from(&entry.relative_path),
@@ -1002,7 +1002,10 @@ fn validate_local_safetensors_file(path: &Path) -> ModelResult<()> {
 }
 
 fn is_transient(error: &ModelError) -> bool {
-    matches!(error, ModelError::Http(_) | ModelError::Provider(_) | ModelError::Io(_))
+    matches!(
+        error,
+        ModelError::Http(_) | ModelError::Provider(_) | ModelError::Io(_)
+    )
 }
 
 fn backoff_delay(attempt: u32) -> std::time::Duration {
@@ -1276,7 +1279,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-
     struct FixtureFetch {
         bytes: Bytes,
     }
@@ -1305,7 +1307,9 @@ mod tests {
                 let start = range.start as usize;
                 let end = range.end as usize;
                 if end > self.bytes.len() || start >= end {
-                    return Err(ModelError::Invalid("fixture range out of bounds".to_owned()));
+                    return Err(ModelError::Invalid(
+                        "fixture range out of bounds".to_owned(),
+                    ));
                 }
                 Ok(self.bytes.slice(start..end))
             })

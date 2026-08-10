@@ -30,7 +30,11 @@ impl Display for StoreError {
             Self::NotFound(message) => write!(f, "not found: {message}"),
             Self::Core(error) => write!(f, "{error}"),
             Self::Backup(path, message) => {
-                write!(f, "migration failed ({message}); backup at {}", path.display())
+                write!(
+                    f,
+                    "migration failed ({message}); backup at {}",
+                    path.display()
+                )
             }
             Self::CredentialStore(message) => {
                 write!(f, "credential store unavailable: {message}")

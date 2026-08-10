@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use mesh_compute::{group_complete_weight_files, BackendKind, LoadedQwen3};
+use mesh_compute::{BackendKind, LoadedQwen3, group_complete_weight_files};
 use mesh_core::{
-    stage_kv_reserve_bytes, DeploymentId, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS,
-    InferencePhase, InferenceView, RequestId, SamplingParams, StopReason, TokenResultEvent,
+    DeploymentId, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
+    InferenceView, RequestId, SamplingParams, StopReason, TokenResultEvent, stage_kv_reserve_bytes,
 };
 use mesh_model::{PrepareResult, ResolvedModel};
 use thiserror::Error;
@@ -88,17 +88,19 @@ impl SingleNodeEngine {
             QWEN3_EOS_TOKEN_ID,
         )?;
         let model = LoadedQwen3::load(&config_path, &weight_files, prefer_cuda)?;
-        let reservation_memory_bytes = prepared.plan.gpu_bytes_reserved.saturating_add(
-            stage_kv_reserve_bytes(
-                1,
-                model.num_kv_heads(),
-                FIRST_CONTEXT_LIMIT,
-                model.head_dim(),
-                model.num_layers(),
-                FIRST_MAX_CONCURRENT_REQUESTS,
-                ALLOCATOR_OVERHEAD_BYTES,
-            ),
-        );
+        let reservation_memory_bytes =
+            prepared
+                .plan
+                .gpu_bytes_reserved
+                .saturating_add(stage_kv_reserve_bytes(
+                    1,
+                    model.num_kv_heads(),
+                    FIRST_CONTEXT_LIMIT,
+                    model.head_dim(),
+                    model.num_layers(),
+                    FIRST_MAX_CONCURRENT_REQUESTS,
+                    ALLOCATOR_OVERHEAD_BYTES,
+                ));
 
         Ok(Self {
             deployment_id,
@@ -132,11 +134,9 @@ impl SingleNodeEngine {
             model_line: Some(self.model_line.clone()),
             backend: Some(self.backend.as_str().to_owned()),
             status_line: match self.phase {
-                InferencePhase::Ready => format!(
-                    "Ready on {} · {}",
-                    self.backend.as_str(),
-                    self.model_line
-                ),
+                InferencePhase::Ready => {
+                    format!("Ready on {} · {}", self.backend.as_str(), self.model_line)
+                }
                 InferencePhase::Generating => "Generating…".to_owned(),
                 InferencePhase::Failed => "Inference failed".to_owned(),
                 other => other.as_str().to_owned(),

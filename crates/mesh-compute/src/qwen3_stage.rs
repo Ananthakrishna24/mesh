@@ -2,17 +2,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::kv_cache::ConcatKvCache;
 use candle_nn::VarBuilder;
+use candle_nn::kv_cache::ConcatKvCache;
 use candle_transformers::models::qwen3::Config as Qwen3Config;
 use candle_transformers::models::with_tracing::{
-    linear_b, linear_no_bias, Embedding, Linear, RmsNorm,
+    Embedding, Linear, RmsNorm, linear_b, linear_no_bias,
 };
 use candle_transformers::utils::repeat_kv;
-use mesh_core::{LayerRange, StageRole, FIRST_CONTEXT_LIMIT};
+use mesh_core::{FIRST_CONTEXT_LIMIT, LayerRange, StageRole};
 
 use crate::{
-    group_complete_weight_files, select_device, BackendKind, ComputeError, ComputeResult, WeightFile,
+    BackendKind, ComputeError, ComputeResult, WeightFile, group_complete_weight_files,
+    select_device,
 };
 
 #[derive(Debug, Clone)]
@@ -195,7 +196,7 @@ impl Qwen3Attention {
         b: usize,
         l: usize,
     ) -> ComputeResult<Tensor> {
-        use candle_nn::attention::{flash_attn, AttnMask};
+        use candle_nn::attention::{AttnMask, flash_attn};
         let q = q.transpose(1, 2)?.contiguous()?;
         let k = k.transpose(1, 2)?.contiguous()?;
         let v = v.transpose(1, 2)?.contiguous()?;
@@ -361,7 +362,8 @@ impl Qwen3Stage {
             .map(|item| item.absolute_path.as_path())
             .collect::<Vec<_>>();
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&paths, dtype, &device).map_err(ComputeError::from)?
+            VarBuilder::from_mmaped_safetensors(&paths, dtype, &device)
+                .map_err(ComputeError::from)?
         };
         if vb.dtype() == DType::F64 {
             return Err(ComputeError::Message(
@@ -633,15 +635,7 @@ impl Qwen3Stage {
     fn causal_mask(&self, b: usize, tgt: usize, offset: usize) -> ComputeResult<Tensor> {
         let minf = f32::NEG_INFINITY;
         let mask: Vec<_> = (0..tgt)
-            .flat_map(|i| {
-                (0..(tgt + offset)).map(move |j| {
-                    if j <= i + offset {
-                        0.
-                    } else {
-                        minf
-                    }
-                })
-            })
+            .flat_map(|i| (0..(tgt + offset)).map(move |j| if j <= i + offset { 0. } else { minf }))
             .collect();
         Ok(
             Tensor::from_slice(&mask, (b, 1, tgt, tgt + offset), &self.device)?

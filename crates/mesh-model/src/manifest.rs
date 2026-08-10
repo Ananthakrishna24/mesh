@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use mesh_core::{
-    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, ModelFormat, ModelIdentity, is_full_commit_sha,
-    manifest_cache_key,
+    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, ModelFormat, ModelIdentity,
+    is_full_commit_sha, manifest_cache_key,
 };
 
 use crate::{ModelError, ModelResult};
@@ -70,7 +70,8 @@ impl CanonicalManifest {
     }
 
     pub fn sorted(mut self) -> Self {
-        self.tensors.sort_by(|left, right| left.name.cmp(&right.name));
+        self.tensors
+            .sort_by(|left, right| left.name.cmp(&right.name));
         self.artifacts
             .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         self.tokenizer_artifacts.sort();

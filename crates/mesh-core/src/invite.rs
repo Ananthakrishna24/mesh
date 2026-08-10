@@ -5,7 +5,7 @@ use prost::Message;
 use sha2::{Digest, Sha256};
 
 use crate::protocol::proto::{
-    CandidateKind as ProtoCandidateKind, EnrollmentInviteV1, EndpointCandidate as ProtoCandidate,
+    CandidateKind as ProtoCandidateKind, EndpointCandidate as ProtoCandidate, EnrollmentInviteV1,
 };
 use crate::{
     CandidateKind, CoreError, CoreResult, EndpointCandidate, EnrollmentId, MeshId, NodeId,
@@ -31,10 +31,7 @@ pub fn encode_invitation_text(invite: &EnrollmentInviteV1) -> CoreResult<String>
             "encoded invitation exceeds 64 KiB".to_owned(),
         ));
     }
-    Ok(format!(
-        "{INVITE_PREFIX}{}",
-        URL_SAFE_NO_PAD.encode(bytes)
-    ))
+    Ok(format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes)))
 }
 
 pub fn decode_invitation_text(input: &str) -> CoreResult<EnrollmentInviteV1> {
@@ -130,9 +127,7 @@ pub fn secret_digest(secret: &[u8]) -> [u8; 32] {
     out
 }
 
-pub fn candidates_from_proto(
-    candidates: &[ProtoCandidate],
-) -> CoreResult<Vec<EndpointCandidate>> {
+pub fn candidates_from_proto(candidates: &[ProtoCandidate]) -> CoreResult<Vec<EndpointCandidate>> {
     candidates.iter().map(parse_proto_candidate).collect()
 }
 

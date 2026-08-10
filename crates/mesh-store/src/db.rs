@@ -6,7 +6,6 @@ use mesh_core::{
     identity_matches,
 };
 
-
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
@@ -15,7 +14,6 @@ use crate::repos;
 use crate::{StoreError, StoreResult};
 
 pub const SCHEMA_VERSION: i32 = 4;
-
 
 #[derive(Debug)]
 pub struct Store {
@@ -270,10 +268,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_model_manifest(
-        &self,
-        cache_key: &str,
-    ) -> StoreResult<Option<ModelManifestRecord>> {
+    pub fn get_model_manifest(&self, cache_key: &str) -> StoreResult<Option<ModelManifestRecord>> {
         repos::models::get_manifest(&self.conn, cache_key)
     }
 
@@ -284,10 +279,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_model_cache_entry(
-        &self,
-        entry_id: &str,
-    ) -> StoreResult<Option<ModelCacheEntry>> {
+    pub fn get_model_cache_entry(&self, entry_id: &str) -> StoreResult<Option<ModelCacheEntry>> {
         repos::models::get_cache_entry(&self.conn, entry_id)
     }
 
@@ -302,7 +294,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn model_cache_view(&self, root: impl Into<String>, max_bytes: u64) -> StoreResult<ModelCacheView> {
+    pub fn model_cache_view(
+        &self,
+        root: impl Into<String>,
+        max_bytes: u64,
+    ) -> StoreResult<ModelCacheView> {
         let (used_bytes, protected_bytes, entry_count, partial_count) =
             repos::models::cache_usage_bytes(&self.conn)?;
         Ok(ModelCacheView {
@@ -314,7 +310,6 @@ impl Store {
             partial_count,
         })
     }
-
 
     fn configure(&self) -> StoreResult<()> {
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -435,7 +430,6 @@ impl Store {
             )?;
             self.conn.pragma_update(None, "user_version", 4i32)?;
             return Ok(());
-
         }
 
         if version < 2 {
@@ -538,7 +532,6 @@ impl Store {
             self.conn.pragma_update(None, "user_version", 4i32)?;
         }
 
-
         Ok(())
     }
 }
@@ -561,7 +554,8 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use mesh_core::{
-        CacheValidationState, ModelCacheEntry, ModelFormat, ModelManifestRecord, PROVIDER_HUGGINGFACE,
+        CacheValidationState, ModelCacheEntry, ModelFormat, ModelManifestRecord,
+        PROVIDER_HUGGINGFACE,
     };
 
     #[test]
@@ -584,7 +578,9 @@ mod tests {
             canonical_bytes: b"{\"ok\":true}".to_vec(),
             created_at_unix_ms: 1,
         };
-        store.upsert_model_manifest(&manifest).expect("upsert manifest");
+        store
+            .upsert_model_manifest(&manifest)
+            .expect("upsert manifest");
         let loaded = store
             .get_model_manifest(&manifest.cache_key)
             .expect("get manifest")
@@ -612,7 +608,9 @@ mod tests {
             last_used_at_unix_ms: 2,
             created_at_unix_ms: 2,
         };
-        store.upsert_model_cache_entry(&entry).expect("upsert cache");
+        store
+            .upsert_model_cache_entry(&entry)
+            .expect("upsert cache");
         let view = store
             .model_cache_view(store.paths().cache_dir.display().to_string(), 0)
             .expect("cache view");
@@ -623,4 +621,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
-

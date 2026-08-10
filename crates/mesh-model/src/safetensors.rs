@@ -105,7 +105,10 @@ pub fn parse_header_length(prefix: &[u8]) -> ModelResult<u64> {
     Ok(header_length)
 }
 
-pub fn parse_safetensors_header(header_length: u64, header_json: &[u8]) -> ModelResult<SafetensorsHeader> {
+pub fn parse_safetensors_header(
+    header_length: u64,
+    header_json: &[u8],
+) -> ModelResult<SafetensorsHeader> {
     if header_json.len() as u64 != header_length {
         return Err(ModelError::Invalid(format!(
             "safetensors header bytes {} != declared length {header_length}",
@@ -135,7 +138,10 @@ pub fn parse_safetensors_header(header_length: u64, header_json: &[u8]) -> Model
             ModelError::Invalid(format!("tensor {name} header invalid: {error}"))
         })?;
         let dtype = SafetensorsDtype::parse(&info.dtype).ok_or_else(|| {
-            ModelError::Unsupported(format!("tensor {name} has unsupported dtype {}", info.dtype))
+            ModelError::Unsupported(format!(
+                "tensor {name} has unsupported dtype {}",
+                info.dtype
+            ))
         })?;
         if info.data_offsets.len() != 2 {
             return Err(ModelError::Invalid(format!(
@@ -166,10 +172,7 @@ pub fn parse_safetensors_header(header_length: u64, header_json: &[u8]) -> Model
     })
 }
 
-pub fn tensor_payload_absolute_range(
-    header_length: u64,
-    data_offsets: (u64, u64),
-) -> (u64, u64) {
+pub fn tensor_payload_absolute_range(header_length: u64, data_offsets: (u64, u64)) -> (u64, u64) {
     let payload_base = 8 + header_length;
     (payload_base + data_offsets.0, payload_base + data_offsets.1)
 }
@@ -226,7 +229,10 @@ mod tests {
             tensor_payload_absolute_range(header_length, tensor.data_offsets),
             (8 + header_length, 8 + header_length + 12)
         );
-        assert_eq!(header.metadata.get("format").map(String::as_str), Some("pt"));
+        assert_eq!(
+            header.metadata.get("format").map(String::as_str),
+            Some("pt")
+        );
     }
 
     #[test]

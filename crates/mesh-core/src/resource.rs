@@ -62,7 +62,10 @@ impl ResourceAmount {
         let mut gpus = Vec::new();
         let mut seen = BTreeMap::new();
         for gpu in &self.gpus {
-            let available = other_map.get(gpu.device_stable_id.as_str()).copied().unwrap_or(0);
+            let available = other_map
+                .get(gpu.device_stable_id.as_str())
+                .copied()
+                .unwrap_or(0);
             gpus.push(GpuResourceAmount {
                 device_stable_id: gpu.device_stable_id.clone(),
                 memory_bytes: gpu.memory_bytes.min(available),
@@ -129,11 +132,11 @@ impl ResourceAmount {
     pub fn checked_add(&self, other: &Self) -> Self {
         let mut map = BTreeMap::new();
         for gpu in self.gpus.iter().chain(other.gpus.iter()) {
-            *map.entry(gpu.device_stable_id.clone()).or_insert(0u64) =
-                map.get(&gpu.device_stable_id)
-                    .copied()
-                    .unwrap_or(0)
-                    .saturating_add(gpu.memory_bytes);
+            *map.entry(gpu.device_stable_id.clone()).or_insert(0u64) = map
+                .get(&gpu.device_stable_id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(gpu.memory_bytes);
         }
         let gpus = map
             .into_iter()
@@ -185,7 +188,13 @@ impl ResourceAmount {
             self.gpus
                 .iter()
                 .filter(|gpu| gpu.memory_bytes > 0)
-                .map(|gpu| format!("{}:{}", gpu.device_stable_id, crate::format_bytes(gpu.memory_bytes)))
+                .map(|gpu| {
+                    format!(
+                        "{}:{}",
+                        gpu.device_stable_id,
+                        crate::format_bytes(gpu.memory_bytes)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -194,7 +203,11 @@ impl ResourceAmount {
             crate::format_bytes(self.system_memory_bytes),
             crate::format_bytes(self.disk_bytes),
             self.execution_slots,
-            if gpu.is_empty() { "no GPU hold".to_owned() } else { gpu }
+            if gpu.is_empty() {
+                "no GPU hold".to_owned()
+            } else {
+                gpu
+            }
         )
     }
 }
@@ -215,9 +228,7 @@ impl ResourceCapacity {
             .iter()
             .map(|gpu| GpuResourceAmount {
                 device_stable_id: gpu.stable_id.clone(),
-                memory_bytes: gpu
-                    .available_memory_bytes
-                    .unwrap_or(gpu.total_memory_bytes),
+                memory_bytes: gpu.available_memory_bytes.unwrap_or(gpu.total_memory_bytes),
             })
             .collect::<Vec<_>>();
         let execution_slots = if gpus.is_empty() {
@@ -350,7 +361,11 @@ pub struct ResourceManagerView {
 }
 
 pub fn clamp_lease_ms(requested: u64, default_ms: u64) -> u64 {
-    let value = if requested == 0 { default_ms } else { requested };
+    let value = if requested == 0 {
+        default_ms
+    } else {
+        requested
+    };
     value.clamp(MIN_LEASE_MS, MAX_LEASE_MS)
 }
 

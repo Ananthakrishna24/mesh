@@ -96,19 +96,20 @@ pub fn parse_content_range_header(value: &str) -> ModelResult<ContentRange> {
     let (start_text, end_text) = span
         .split_once('-')
         .ok_or_else(|| ModelError::Invalid(format!("invalid content-range span: {value}")))?;
-    let start = start_text.parse::<u64>().map_err(|_| {
-        ModelError::Invalid(format!("invalid content-range start: {value}"))
-    })?;
-    let end_inclusive = end_text.parse::<u64>().map_err(|_| {
-        ModelError::Invalid(format!("invalid content-range end: {value}"))
-    })?;
-    let total = if total_part == "*" {
-        None
-    } else {
-        Some(total_part.parse::<u64>().map_err(|_| {
-            ModelError::Invalid(format!("invalid content-range total: {value}"))
-        })?)
-    };
+    let start = start_text
+        .parse::<u64>()
+        .map_err(|_| ModelError::Invalid(format!("invalid content-range start: {value}")))?;
+    let end_inclusive = end_text
+        .parse::<u64>()
+        .map_err(|_| ModelError::Invalid(format!("invalid content-range end: {value}")))?;
+    let total =
+        if total_part == "*" {
+            None
+        } else {
+            Some(total_part.parse::<u64>().map_err(|_| {
+                ModelError::Invalid(format!("invalid content-range total: {value}"))
+            })?)
+        };
     Ok(ContentRange {
         start,
         end_inclusive,
