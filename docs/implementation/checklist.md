@@ -19,7 +19,8 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P03 Linux paths are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P03 Linux paths are implemented. P04 automatic direct connectivity is implemented on Linux. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
+
 
 ## Accepted baseline and locked contracts
 
@@ -270,18 +271,22 @@ Prerequisites:
 
 Build:
 
-- [ ] Implement IPv6 candidate collection.
-- [ ] Implement IPv4 candidate collection.
-- [ ] Implement automatic router mapping.
-- [ ] Implement peer-assisted hole punching.
-- [ ] Implement guided firewall-failure recovery.
-- [ ] Implement guided manual-forwarding failure recovery.
+- [x] Implement IPv6 candidate collection.
+- [x] Implement IPv4 candidate collection.
+- [x] Implement automatic router mapping.
+- [x] Implement peer-assisted hole punching.
+- [x] Implement guided firewall-failure recovery.
+- [x] Implement guided manual-forwarding failure recovery.
 
 Proof:
 
-- [ ] Enrollment uses automatic direct paths when available.
-- [ ] Enrollment gives one clear recovery action when an automatic direct path is unavailable.
+- [x] Enrollment uses automatic direct paths when available.
+  - Evidence: `cargo test -p mesh-node two_nodes_enroll_over_localhost` still enrolls over local candidates; runtime gathers GlobalIpv6/PublicIpv4/LocalNetwork and attempts PCP→NAT-PMP→UPnP router mapping before invite/dial. Pre-bound socket proof: `mesh-net::prebound_udp_socket_serves_quic`.
+- [x] Enrollment gives one clear recovery action when an automatic direct path is unavailable.
+  - Evidence: failed join sets `ConnectivityRecovery` with primary **Try automatic setup again** and secondary **Show manual router steps**, plus firewall help and technical details in the enroll GUI.
 - [ ] P04 proof covers both available-path and unavailable-path cases.
+  - Available path: localhost enrollment unit test. Unavailable path: recovery UI path unit/runtime covered; real dual-NAT internet proof remains manual.
+
 
 ### P05 — Resource reservations
 

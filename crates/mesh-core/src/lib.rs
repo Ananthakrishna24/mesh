@@ -33,6 +33,7 @@ pub use protocol::{
     now_unix_ms, proto, random_message_id,
 };
 pub use ui::{
-    AppScreen, EnrollmentProgress, HardwareSummaryView, LinkSummaryView, LocalNodeSummary,
-    RuntimePhase, UiCommand, UiSnapshot,
+    AppScreen, ConnectivityRecovery, EnrollmentProgress, HardwareSummaryView, LinkSummaryView,
+    LocalNodeSummary, ManualForwardingGuide, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot,
 };
+

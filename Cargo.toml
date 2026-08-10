@@ -69,3 +69,6 @@ tokio = { version = "1.53.1", features = [
 tokio-util = { version = "0.7.15", features = ["codec"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+igd-next = { version = "0.17.1", default-features = false, features = ["aio_tokio"] }
+crab_nat = "0.8.1"
+

@@ -19,8 +19,12 @@ message ControlEnvelope {
     BenchmarkAccept benchmark_accept = 17;
     BenchmarkReject benchmark_reject = 18;
     BenchmarkResult benchmark_result = 19;
+    IntroductionOffer introduction_offer = 20;
+    IntroductionReady introduction_ready = 21;
+    PeerObserve peer_observe = 22;
   }
 }
+
 
 message Hello {
   bytes mesh_id = 1;
@@ -186,3 +190,25 @@ enum BenchmarkDirection {
   TO_PEER = 1;
   FROM_PEER = 2;
 }
+
+message IntroductionOffer {
+  bytes target_node_id = 1;
+  bytes attempt_id = 2;
+  int64 start_at_unix_ms = 3;
+  string observed_address = 4;
+}
+
+message IntroductionReady {
+  bytes attempt_id = 1;
+  bytes peer_node_id = 2;
+  string peer_observed_address = 3;
+  string self_observed_address = 4;
+  int64 start_at_unix_ms = 5;
+}
+
+message PeerObserve {
+  bytes observed_node_id = 1;
+  string address = 2;
+  int64 observed_at_unix_ms = 3;
+}
+

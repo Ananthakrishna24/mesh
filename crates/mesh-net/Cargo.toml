@@ -18,3 +18,6 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+igd-next = { workspace = true }
+crab_nat = { workspace = true }
+

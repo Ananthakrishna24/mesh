@@ -4,7 +4,9 @@ mod endpoint;
 mod error;
 mod frame;
 mod handshake;
+mod holepunch;
 mod identity;
+mod mapping;
 mod session;
 mod tls;
 
@@ -14,15 +16,28 @@ pub use benchmark::{
     run_bandwidth_send, run_delay_benchmark, respond_bandwidth_receive, respond_bandwidth_send,
     respond_delay_benchmark, summarize_delay_samples,
 };
-pub use candidates::collect_local_candidates;
+pub use candidates::{
+    advertised_candidates, collect_local_candidates, collect_local_candidates_at,
+    with_manual_candidate, with_peer_observed, with_router_mapping,
+};
 pub use endpoint::{IncomingPeer, MeshEndpoint, PeerConnection};
 pub use error::{NetError, NetResult};
 pub use frame::{read_envelope, write_envelope};
 pub use handshake::{
     EnrollmentHello, WelcomePayload, complete_inviter_handshake, perform_joiner_handshake,
 };
+pub use holepunch::{
+    HOLE_PUNCH_WINDOW, IntroductionAttempt, build_introduction_offer, build_introduction_ready,
+    build_peer_observe, new_attempt_id, parse_socket_addr, peer_observed_candidate,
+    send_udp_probes, start_at_after, wait_until_unix_ms, write_control,
+};
 pub use identity::generate_node_certificate;
-pub use session::{SessionEvent, run_connected_session};
+pub use mapping::{
+    MAPPING_BUDGET, MAPPING_LIFETIME_SECS, MappingProtocol, MappingResult, RouterMappingHandle,
+    attempt_router_mapping, discover_ipv4_gateway_and_local,
+};
+pub use session::{SessionCommand, SessionEvent, run_connected_session};
+
 
 #[cfg(test)]
 mod tests {
@@ -176,6 +191,7 @@ mod tests {
             .await
             .expect("inviter handshake");
             let (tx, mut rx) = mpsc::channel(16);
+            let (_cmd_tx, cmd_rx) = mpsc::channel(4);
             let peer_id = peer.node_id;
             let session = tokio::spawn(async move {
                 run_connected_session(
@@ -186,6 +202,7 @@ mod tests {
                     recv,
                     left_report,
                     tx,
+                    cmd_rx,
                 )
                 .await;
             });
@@ -233,6 +250,7 @@ mod tests {
         .await
         .expect("joiner handshake");
         let (tx, mut rx) = mpsc::channel(16);
+        let (_cmd_tx, cmd_rx) = mpsc::channel(4);
         let right_identity_task = right_identity.clone();
         let peer_id = left_identity.node_id;
         let session = tokio::spawn(async move {
@@ -244,9 +262,11 @@ mod tests {
                 recv,
                 right_report,
                 tx,
+                cmd_rx,
             )
             .await;
         });
+
         let mut saw_delay = false;
         let mut saw_bandwidth = false;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);

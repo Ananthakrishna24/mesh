@@ -24,6 +24,37 @@ pub enum RuntimePhase {
     ShuttingDown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecoveryAction {
+    RetryAutomatic,
+    ShowManualSteps,
+    RegenerateInvitation,
+    OpenFirewallHelp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualForwardingGuide {
+    pub local_udp_port: u16,
+    pub local_address: Option<SocketAddr>,
+    pub protocol: String,
+    pub public_address_input: String,
+    pub instructions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectivityRecovery {
+    pub title: String,
+    pub message: String,
+    pub primary: RecoveryAction,
+    pub secondary: Option<RecoveryAction>,
+    pub technical_details: Vec<String>,
+    pub manual: Option<ManualForwardingGuide>,
+    pub show_manual: bool,
+    pub show_firewall_help: bool,
+    pub firewall_message: String,
+}
+
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalNodeSummary {
     pub display_name: String,
@@ -38,7 +69,10 @@ pub struct EnrollmentProgress {
     pub current: String,
     pub invitation_text: Option<String>,
     pub error: Option<String>,
+    pub recovery: Option<ConnectivityRecovery>,
+    pub router_mapping_ok: Option<bool>,
 }
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiCommand {
@@ -49,8 +83,16 @@ pub enum UiCommand {
     CreateInvitation,
     ClearInvitation,
     RefreshHardware,
+    RetryAutomaticConnectivity,
+    ShowManualForwarding,
+    HideManualForwarding,
+    SetManualPublicAddress { address: String },
+    ApplyManualPublicAddress,
+    ShowFirewallHelp,
+    HideFirewallHelp,
     Shutdown,
 }
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HardwareSummaryView {
@@ -185,7 +227,10 @@ impl UiSnapshot {
                 current: String::new(),
                 invitation_text: None,
                 error: None,
+                recovery: None,
+                router_mapping_ok: None,
             },
+
             can_create_invitation: false,
         }
     }

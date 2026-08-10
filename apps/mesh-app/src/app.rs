@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Theme, Ui, Vec2};
-use mesh_core::{AppScreen, RuntimePhase, UiCommand, UiSnapshot};
+use mesh_core::{AppScreen, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot};
 use mesh_node::NodeHandle;
+
 
 pub struct MeshApp {
     handle: NodeHandle,
@@ -181,7 +182,11 @@ impl MeshApp {
             });
         });
 
-        if !snapshot.enrollment.steps.is_empty() || snapshot.enrollment.error.is_some() {
+        if !snapshot.enrollment.steps.is_empty()
+            || snapshot.enrollment.error.is_some()
+            || snapshot.enrollment.recovery.is_some()
+        {
+
             ui.add_space(16.0);
             card(ui, |ui| {
                 ui.heading("Progress");
@@ -202,6 +207,123 @@ impl MeshApp {
                 if let Some(error) = &snapshot.enrollment.error {
                     ui.add_space(8.0);
                     ui.colored_label(Color32::from_rgb(180, 60, 60), error);
+                }
+                if let Some(recovery) = &snapshot.enrollment.recovery {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new(&recovery.title).strong());
+                    ui.label(&recovery.message);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        let primary = match recovery.primary {
+                            RecoveryAction::RetryAutomatic => "Try automatic setup again",
+                            RecoveryAction::ShowManualSteps => "Show manual router steps",
+                            RecoveryAction::RegenerateInvitation => "Create a new invitation",
+                            RecoveryAction::OpenFirewallHelp => "Show firewall help",
+                        };
+                        if primary_button(ui, primary).clicked() {
+                            match recovery.primary {
+                                RecoveryAction::RetryAutomatic => {
+                                    self.send(UiCommand::RetryAutomaticConnectivity);
+                                }
+                                RecoveryAction::ShowManualSteps => {
+                                    self.send(UiCommand::ShowManualForwarding);
+                                }
+                                RecoveryAction::RegenerateInvitation => {
+                                    self.send(UiCommand::CreateInvitation);
+                                }
+                                RecoveryAction::OpenFirewallHelp => {
+                                    self.send(UiCommand::ShowFirewallHelp);
+                                }
+                            }
+                        }
+                        if let Some(secondary) = recovery.secondary {
+                            let label = match secondary {
+                                RecoveryAction::ShowManualSteps => "Show manual router steps",
+                                RecoveryAction::OpenFirewallHelp => "Show firewall help",
+                                RecoveryAction::RetryAutomatic => "Try again",
+                                RecoveryAction::RegenerateInvitation => "New invitation",
+                            };
+                            if ui.button(label).clicked() {
+                                match secondary {
+                                    RecoveryAction::ShowManualSteps => {
+                                        self.send(UiCommand::ShowManualForwarding);
+                                    }
+                                    RecoveryAction::OpenFirewallHelp => {
+                                        self.send(UiCommand::ShowFirewallHelp);
+                                    }
+                                    RecoveryAction::RetryAutomatic => {
+                                        self.send(UiCommand::RetryAutomaticConnectivity);
+                                    }
+                                    RecoveryAction::RegenerateInvitation => {
+                                        self.send(UiCommand::CreateInvitation);
+                                    }
+                                }
+                            }
+                        }
+                        if ui.button("Show firewall help").clicked() {
+                            self.send(UiCommand::ShowFirewallHelp);
+                        }
+                    });
+                    if recovery.show_firewall_help {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(&recovery.firewall_message).weak());
+                    }
+                    if recovery.show_manual {
+                        if let Some(manual) = &recovery.manual {
+                            ui.add_space(10.0);
+                            ui.label(RichText::new("Manual UDP forwarding").strong());
+                            kv(ui, "Protocol", &manual.protocol);
+                            kv(ui, "Local UDP port", &manual.local_udp_port.to_string());
+                            kv(
+                                ui,
+                                "Local address",
+                                &manual
+                                    .local_address
+                                    .map(|addr| addr.to_string())
+                                    .unwrap_or_else(|| "—".to_owned()),
+                            );
+                            for line in &manual.instructions {
+                                ui.label(format!("• {line}"));
+                            }
+                            ui.add_space(8.0);
+                            ui.label("Public address after forwarding");
+                            let mut public = manual.public_address_input.clone();
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut public)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("203.0.113.10:4433"),
+                                )
+                                .changed()
+                            {
+                                self.send(UiCommand::SetManualPublicAddress { address: public });
+                            }
+                            if ui.button("Save manual address").clicked() {
+                                self.send(UiCommand::ApplyManualPublicAddress);
+                            }
+                        }
+                    }
+                    if !recovery.technical_details.is_empty() {
+                        ui.add_space(8.0);
+                        ui.collapsing("Technical details", |ui| {
+                            for detail in &recovery.technical_details {
+                                ui.monospace(detail);
+                            }
+                        });
+                    }
+                }
+                if let Some(mapping_ok) = snapshot.enrollment.router_mapping_ok {
+                    ui.add_space(6.0);
+                    if mapping_ok {
+                        ui.label(RichText::new("Router mapping prepared automatically.").weak());
+                    } else {
+                        ui.label(
+                            RichText::new(
+                                "Automatic router mapping was unavailable on this network.",
+                            )
+                            .weak(),
+                        );
+                    }
                 }
             });
         }
