@@ -8,20 +8,20 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - A07 + P03 Linux hardware/network discovery (`73d2575`).
 - A08/A10 contracts + store peer schema v2 / merge helpers (`c4610c2` and prior).
 - P04 automatic direct connectivity (`104816a`).
-- **P05 resource reservations** — ready to commit this session:
-  - Control proto: `ResourceQuery`/`Offer`/`Reserve*`/`Commit`/`Release` on fields 20–26; introduction messages moved to 50–52 to match canonical control-protocol numbering.
-  - `mesh-core`: `DeploymentId`, `ReservationId`, `resource.rs` amounts/leases/views; UI snapshot `resources` + probe/release commands.
-  - `mesh-inference::LocalResourceManager`: offer, reserve, commit, release, expiry, owner cleanup; exclusive-capacity unit proof.
-  - `mesh-store` schema v3 `reservations` table + repo CRUD; restore on runtime start.
-  - `mesh-net` reservation wire helpers + session command/event handlers.
-  - `mesh-node` runtime: manager wiring, sweep tick, remote request handling, local probe path, GUI state publish.
-  - GUI dashboard **Local resources** card with probe/release.
-  - Checklist/roadmap updated; P05 build + proof checked.
-  - Verified: `cargo test -p mesh-core -p mesh-inference -p mesh-store -p mesh-net -p mesh-node --lib`; `cargo build -p mesh-app`.
-  - After commit: replace this bullet’s “ready to commit” with the new hash.
+- P05 resource reservations (`ae8d345`).
+- **A11–A13 locked** this session (docs ready to commit with P06 foundation):
+  - Expanded `docs/architecture/inference/model-distribution.md` with full A11/A12/A13 contracts.
+  - ADR-0015 provider manifest, partial download, and cache policy.
+  - Roadmap/checklist/decisions index/docs index updated; A11–A13 checkboxes resolved.
+- **P06 foundation started** (same change set, uncommitted):
+  - `mesh-core`: model identity/reference/access/cache view types; `UiSnapshot.models`.
+  - `mesh-model`: Safetensors header parser, range merge, Content-Range validation, canonical manifest hash.
+  - `mesh-store` schema v4: `model_manifests` + `model_cache_entries` repos/APIs + unit proof.
+  - Verified: `cargo test -p mesh-core -p mesh-model -p mesh-store -p mesh-node --lib`; `cargo build -p mesh-app`.
 
 # In progress
-- Nothing mid-edit. User committing P05, then next session starts **P06** after A11–A13.
+- P06 model provider and cache implementation after foundation.
+- User should commit A11–A13 docs + P06 foundation together (or split docs-first if preferred).
 
 # Decisions
 - Phases are serial. Do not parallelize implementation phases (`AGENTS.md`).
@@ -43,7 +43,11 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - P05: Local Resource Manager lives in `mesh-inference` (workspace ownership), not `mesh-compute`.
 - P05: default hold lease 60s, commit lease 30 min, max 2 h; offer TTL 15s.
 - P05: introduction control fields renumbered to 50–52 so resource messages keep canonical 20–26.
-- P05 proof: exclusive local capacity via manager unit test + runtime probe path; remote wire path is implemented and exercised by session handlers (full multi-coordinator internet enrollment remains separate from this phase proof).
+- P05 proof: exclusive local capacity via manager unit test + runtime probe path.
+- **A11:** HF Hub only in v1; pin full 40-char commit SHA; `qwen3-dense@1.0.0`; manifest hash = SHA-256 of canonical JSON (sorted tensors/artifacts); cache key includes adapter/format/quant.
+- **A12:** accept only validated `206`+`Content-Range`; `.partial` never worker-visible; bounded retries inside reservation lease; complete-shard fallback on unsupported range or ≥80% coverage.
+- **A13:** local `ProviderAccessReport`; disk prepare uses P05 leases net of cache hits; default `cache_max_bytes=0` unlimited soft cap + volume reserve floor `max(5GiB,5%)`; evict unreferenced only; 30 min partial grace.
+- **P06 ownership:** provider/manifest/range logic in `mesh-model`; metadata/credentials in `mesh-store`; leases in `mesh-inference`.
 
 # Gotchas
 - Quinn `SendStream::write_all` is inherent in this Quinn version.
@@ -53,7 +57,7 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Metal discovery feature-gated (`mesh-hardware` `metal`); unproven on macOS.
 - Windows NVML path compiles but is unproven on a Windows host.
 - Full interactive two-window GUI proof remains manual.
-- DBs schema v1 → v2 peers; v2 → v3 adds `reservations`. Fresh DBs set `user_version=3`.
+- DBs schema v1 → v2 peers; v2 → v3 reservations; **v3 → v4 model_manifests + model_cache_entries**. Fresh DBs set `user_version=4`.
 - Wire `EndpointCandidate` is still kind/address/priority only; local observation/expiry/reachability filled on receive.
 - `crab_nat` NAT-PMP needs separate `external_address` for public IP; PCP carries external IP in mapping type.
 - Linux gateway: `/proc/net/route`; non-Linux guesses `.1` on local /24.
@@ -63,34 +67,36 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - `ErrorMessage` now has optional `deployment_id`/`request_id`/`transfer_id` fields; constructors must set them.
 - Three-node simultaneous enrollment over real WAN candidates is flaky in unit tests; keep multi-coordinator proofs on localhost/local manager paths for CI.
 - `reserve_on_peer` exists for later coordinator use but is unused in P05 UI; allowed dead_code for now.
+- `UiSnapshot` now includes `models: ModelStoreView`; update any manual struct literals if added later.
+- Canonical manifest hashing currently uses sorted JSON (`serde_json`); CBOR can replace later if needed but hash inputs must stay stable once deployments pin hashes.
+- HF adapter / live downloads not implemented yet; no network provider calls in this foundation slice.
 
 # Next
-1. **Lock A11–A13** before P06:
-   - A11 provider manifest generation (HF Hub first).
-   - A12 partial download validation.
-   - A13 provider access + local cache policy (disk reservation already partially overlaps P05 leases).
-2. **Start P06 — Model provider and cache** against roadmap/checklist after those gates.
-3. Optional anytime: dual-NAT / two-window GUI enrollment proof:
+1. Continue **P06**:
+   - Hugging Face adapter (`hf-hub` + explicit HTTP range path).
+   - Immutable revision resolve + access probe.
+   - Range download + complete-shard fallback + partial resume.
+   - Wire Model Store into `mesh-node` runtime and GUI (selection, token save/delete, progress, failures).
+   - Parallel prepare plan types and disk-reservation netting from cache hits.
+2. Optional anytime: dual-NAT / two-window GUI enrollment proof:
    ```bash
    MESH_DATA_DIR=/tmp/mesh-a cargo run --release
    MESH_DATA_DIR=/tmp/mesh-b cargo run --release
    ```
-4. Before P07 inference: also lock **A05** tokenizer/sampling and **A06** KV-cache.
-5. **End of project**: Windows and macOS `cargo run --release` + GUI enrollment/hardware proofs; check remaining P01–P05 host proof boxes.
+3. Before P07 inference: lock **A05** tokenizer/sampling and **A06** KV-cache.
+4. **End of project**: Windows and macOS `cargo run --release` + GUI enrollment/hardware proofs; check remaining P01–P05 host proof boxes.
 
 # Resume map
 | Path | Role |
 |---|---|
 | `AGENTS.md` | Agent coding/phase rules |
-| `docs/implementation/roadmap.md` | Canonical phase order (P06 next after A11–A13) |
+| `docs/implementation/roadmap.md` | Canonical phase order (P06 in progress) |
 | `docs/implementation/checklist.md` | Progress checkboxes |
-| `docs/architecture/protocol/control-protocol.md` | Control envelope + reservation message names |
-| `docs/architecture/inference/README.md` | Reservation protocol flow |
-| `docs/architecture/system/node-modules.md` | M09 Local Resource Manager |
-| `docs/architecture/system/persistent-state.md` | Durable reservations |
-| `crates/mesh-core/` | IDs, proto, resource types, UI types |
-| `crates/mesh-inference/` | `LocalResourceManager` |
-| `crates/mesh-store/` | SQLite + reservations repo |
-| `crates/mesh-net/` | Quinn, reservation wire, session |
-| `crates/mesh-node/src/runtime.rs` | Runtime composition |
+| `docs/architecture/inference/model-distribution.md` | A11–A13 canonical contract |
+| `docs/decisions/0015-provider-manifest-download-cache.md` | A11–A13 ADR |
+| `docs/architecture/system/persistent-state.md` | Durable manifests/cache + schema v4 note |
+| `crates/mesh-core/src/model.rs` | Model identity/access/cache types |
+| `crates/mesh-model/` | Parser, validation, manifest hash |
+| `crates/mesh-store/src/repos/models.rs` | Manifest/cache SQLite repos |
+| `crates/mesh-node/src/runtime.rs` | Runtime composition (Model Store wiring next) |
 | `apps/mesh-app/` | eframe GUI binary `mesh` |

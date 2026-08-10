@@ -82,6 +82,9 @@ Persist:
 | Reservations | Lease identity and expiry needed to release stale capacity after restart |
 | User preferences | Non-secret application settings |
 
+Schema note: `user_version = 4` adds `model_manifests` and `model_cache_entries` for P06. Fresh databases set `user_version=4`.
+
+
 Do not persist as authoritative state:
 
 - Open QUIC connections.

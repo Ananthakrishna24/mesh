@@ -18,6 +18,8 @@ Read accepted decisions before changing a related subsystem.
 | [ADR-0012](0012-network-benchmark-and-placement-cost.md) | Network benchmark and placement cost | Accepted |
 | [ADR-0013](0013-nat-router-mapping-crates.md) | NAT and router mapping crates | Accepted |
 | [ADR-0014](0014-peer-record-merge-rules.md) | Peer-record merge rules | Accepted |
+| [ADR-0015](0015-provider-manifest-download-cache.md) | Provider manifest, partial download, and cache policy | Accepted |
+
 
 
 A new decision must state its context, selected approach, rejected approaches, and consequences. A replacement decision must link to the decision it replaces.

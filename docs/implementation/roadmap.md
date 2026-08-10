@@ -8,7 +8,9 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P06 model provider and cache after A11–A13 are locked.
+P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, A10, and A11–A13 are accepted. P06 foundation types, Safetensors/manifest helpers, and store schema v4 exist. Windows and macOS host proofs remain deferred to the end. Continue P06 Hugging Face adapter, downloads, runtime wiring, and GUI.
+
+
 
 
 Accepted areas:
@@ -100,15 +102,20 @@ Accepted in [Peer-record merge rules](../architecture/networking/peer-record-mer
 
 ### A11 — Provider manifest generation
 
-Confirm Hugging Face Hub as the first provider. Define immutable revision resolution, Safetensors header discovery, Model Family Adapter mapping, manifest cache key, and adapter-version behavior.
+Accepted in [Provider-backed model distribution](../architecture/inference/model-distribution.md) and [ADR-0015](../decisions/0015-provider-manifest-download-cache.md).
+
+Hugging Face Hub is the first provider. Deployments pin a full commit SHA, discover Safetensors headers, map tensors through a versioned Model Family Adapter, and cache manifests by provider/repository/revision/adapter/format.
 
 ### A12 — Partial download validation
 
-Define `Content-Range`, length, shape, data type, ETag, digest, incomplete-file, retry, and complete-shard fallback rules.
+Accepted in [Provider-backed model distribution](../architecture/inference/model-distribution.md) and [ADR-0015](../decisions/0015-provider-manifest-download-cache.md).
+
+Range responses require validated `Content-Range`, length, dtype, shape, ETag, and digest checks. Incomplete `.partial` objects are never worker-visible. Retries are bounded inside the reservation lease. Unsupported ranges fall back to complete containing shards.
 
 ### A13 — Provider access and local cache
 
-Provider credential persistence is accepted in [Persistent state](../architecture/system/persistent-state.md). Define provider-access capability reporting, disk reservation, cache limit, eviction thresholds, active-artifact protection, and incomplete-download cleanup.
+Credential persistence is accepted in [Persistent state](../architecture/system/persistent-state.md). Access reporting, disk reservation interaction, cache limits, eviction, active-artifact protection, and incomplete-download cleanup are accepted in [Provider-backed model distribution](../architecture/inference/model-distribution.md) and [ADR-0015](../decisions/0015-provider-manifest-download-cache.md).
+
 
 ## Implementation phases
 
@@ -298,5 +305,7 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-P05 is implemented. Keep Windows/macOS host proofs until the end. Before P06 model provider/cache work, lock A11–A13. Before P07 inference, also lock A05 and A06.
+Continue P06 model provider and cache (HF adapter, downloads, runtime/GUI). Keep Windows/macOS host proofs until the end. Before P07 inference, also lock A05 and A06.
+
+
 

@@ -6,6 +6,8 @@ pub mod invite;
 mod peer;
 pub mod protocol;
 mod resource;
+mod model;
+
 mod ui;
 
 pub use error::{CoreError, CoreResult};
@@ -40,6 +42,16 @@ pub use resource::{
     ResourceCapacity, ResourceManagerView, ResourceOffer, ResourceQuery, clamp_lease_ms,
     current_time_ms, offer_expiry,
 };
+pub use model::{
+    ADAPTER_QWEN3_DENSE, ADAPTER_QWEN3_DENSE_VERSION, CACHE_VOLUME_RESERVE_BYTES,
+    CACHE_VOLUME_RESERVE_RATIO_DEN, CACHE_VOLUME_RESERVE_RATIO_NUM, CacheValidationState,
+    DEFAULT_CACHE_MAX_BYTES, DISK_PREPARE_MARGIN_BYTES, ETAG_REVALIDATE_MS, MAX_SAFETENSORS_HEADER_BYTES,
+    ModelCacheEntry, ModelCacheView, ModelFormat, ModelIdentity, ModelManifestRecord,
+    ModelReference, ModelStoreView, PARTIAL_GRACE_MS, PROVIDER_HUGGINGFACE, ProviderAccessReport,
+    ProviderAccessStatus, ProviderAuthMode, RANGE_MERGE_GAP_BYTES, is_full_commit_sha,
+    manifest_cache_key, prepare_disk_margin, short_revision, volume_reserve_floor,
+};
+
 pub use ui::{
     AppScreen, ConnectivityRecovery, EnrollmentProgress, HardwareSummaryView, LinkSummaryView,
     LocalNodeSummary, ManualForwardingGuide, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot,

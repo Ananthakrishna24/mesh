@@ -2,8 +2,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mesh_core::{
     EnrollmentId, InvitationRecord, InvitationState, LocalIdentity, LocalReservation, MeshId,
-    NodeId, PeerRecord, ReservationId, identity_matches,
+    ModelCacheEntry, ModelCacheView, ModelManifestRecord, NodeId, PeerRecord, ReservationId,
+    identity_matches,
 };
+
+
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
@@ -11,7 +14,8 @@ use crate::paths::StorePaths;
 use crate::repos;
 use crate::{StoreError, StoreResult};
 
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
+
 
 #[derive(Debug)]
 pub struct Store {
@@ -258,6 +262,58 @@ impl Store {
     ) -> StoreResult<Option<LocalReservation>> {
         repos::reservations::get(&self.conn, reservation_id)
     }
+    pub fn upsert_model_manifest(&mut self, record: &ModelManifestRecord) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        repos::models::upsert_manifest(&tx, record)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_model_manifest(
+        &self,
+        cache_key: &str,
+    ) -> StoreResult<Option<ModelManifestRecord>> {
+        repos::models::get_manifest(&self.conn, cache_key)
+    }
+
+    pub fn upsert_model_cache_entry(&mut self, entry: &ModelCacheEntry) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        repos::models::upsert_cache_entry(&tx, entry)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_model_cache_entry(
+        &self,
+        entry_id: &str,
+    ) -> StoreResult<Option<ModelCacheEntry>> {
+        repos::models::get_cache_entry(&self.conn, entry_id)
+    }
+
+    pub fn list_model_cache_entries(&self) -> StoreResult<Vec<ModelCacheEntry>> {
+        repos::models::list_cache_entries(&self.conn)
+    }
+
+    pub fn delete_model_cache_entry(&mut self, entry_id: &str) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        repos::models::delete_cache_entry(&tx, entry_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn model_cache_view(&self, root: impl Into<String>, max_bytes: u64) -> StoreResult<ModelCacheView> {
+        let (used_bytes, protected_bytes, entry_count, partial_count) =
+            repos::models::cache_usage_bytes(&self.conn)?;
+        Ok(ModelCacheView {
+            root: root.into(),
+            used_bytes,
+            protected_bytes,
+            max_bytes,
+            entry_count,
+            partial_count,
+        })
+    }
+
 
     fn configure(&self) -> StoreResult<()> {
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -332,11 +388,53 @@ impl Store {
                 CREATE INDEX idx_reservations_owner ON reservations(owner_node_id);
                 CREATE INDEX idx_reservations_expiry ON reservations(expires_at_unix_ms);
 
+                CREATE TABLE model_manifests (
+                    cache_key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    adapter_id TEXT NOT NULL,
+                    adapter_version TEXT NOT NULL,
+                    model_format TEXT NOT NULL,
+                    quantization TEXT,
+                    manifest_hash TEXT NOT NULL,
+                    canonical_bytes BLOB NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX idx_model_manifests_revision
+                    ON model_manifests(provider, repository, revision);
+
+                CREATE TABLE model_cache_entries (
+                    entry_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    byte_length INTEGER NOT NULL,
+                    range_start INTEGER,
+                    range_end INTEGER,
+                    etag TEXT,
+                    digest_hex TEXT,
+                    dtype TEXT,
+                    shape_json TEXT,
+                    state TEXT NOT NULL,
+                    reference_count INTEGER NOT NULL,
+                    pinned INTEGER NOT NULL,
+                    last_used_at_unix_ms INTEGER NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX idx_model_cache_last_used
+                    ON model_cache_entries(last_used_at_unix_ms);
+                CREATE INDEX idx_model_cache_state
+                    ON model_cache_entries(state);
+
                 INSERT INTO onboarding (id, last_step) VALUES (1, 'not_enrolled');
                 "#,
             )?;
-            self.conn.pragma_update(None, "user_version", 3i32)?;
+            self.conn.pragma_update(None, "user_version", 4i32)?;
             return Ok(());
+
         }
 
         if version < 2 {
@@ -391,6 +489,55 @@ impl Store {
             self.conn.pragma_update(None, "user_version", 3i32)?;
         }
 
+        if version < 4 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS model_manifests (
+                    cache_key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    adapter_id TEXT NOT NULL,
+                    adapter_version TEXT NOT NULL,
+                    model_format TEXT NOT NULL,
+                    quantization TEXT,
+                    manifest_hash TEXT NOT NULL,
+                    canonical_bytes BLOB NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_manifests_revision
+                    ON model_manifests(provider, repository, revision);
+
+                CREATE TABLE IF NOT EXISTS model_cache_entries (
+                    entry_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    byte_length INTEGER NOT NULL,
+                    range_start INTEGER,
+                    range_end INTEGER,
+                    etag TEXT,
+                    digest_hex TEXT,
+                    dtype TEXT,
+                    shape_json TEXT,
+                    state TEXT NOT NULL,
+                    reference_count INTEGER NOT NULL,
+                    pinned INTEGER NOT NULL,
+                    last_used_at_unix_ms INTEGER NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_cache_last_used
+                    ON model_cache_entries(last_used_at_unix_ms);
+                CREATE INDEX IF NOT EXISTS idx_model_cache_state
+                    ON model_cache_entries(state);
+                "#,
+            )?;
+            self.conn.pragma_update(None, "user_version", 4i32)?;
+        }
+
+
         Ok(())
     }
 }
@@ -408,3 +555,71 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     out.copy_from_slice(&digest);
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mesh_core::{
+        CacheValidationState, ModelCacheEntry, ModelFormat, ModelManifestRecord, PROVIDER_HUGGINGFACE,
+    };
+
+    #[test]
+    fn schema_v4_persists_manifest_and_cache_entries() {
+        let root = std::env::temp_dir().join(format!("mesh-store-model-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = StorePaths::isolated(&root);
+        let mut store = Store::open(paths).expect("open store");
+
+        let manifest = ModelManifestRecord {
+            cache_key: "huggingface:Qwen/Qwen3-4B:0123456789abcdef0123456789abcdef01234567:adapter=qwen3-dense@1.0.0:fmt=safetensors:quant=none".to_owned(),
+            provider: PROVIDER_HUGGINGFACE.to_owned(),
+            repository: "Qwen/Qwen3-4B".to_owned(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            adapter_id: "qwen3-dense".to_owned(),
+            adapter_version: "1.0.0".to_owned(),
+            model_format: ModelFormat::Safetensors,
+            quantization: None,
+            manifest_hash: "ab".repeat(32),
+            canonical_bytes: b"{\"ok\":true}".to_vec(),
+            created_at_unix_ms: 1,
+        };
+        store.upsert_model_manifest(&manifest).expect("upsert manifest");
+        let loaded = store
+            .get_model_manifest(&manifest.cache_key)
+            .expect("get manifest")
+            .expect("manifest present");
+        assert_eq!(loaded.manifest_hash, manifest.manifest_hash);
+        assert_eq!(loaded.canonical_bytes, manifest.canonical_bytes);
+
+        let entry = ModelCacheEntry {
+            entry_id: "entry-1".to_owned(),
+            provider: PROVIDER_HUGGINGFACE.to_owned(),
+            repository: "Qwen/Qwen3-4B".to_owned(),
+            revision: manifest.revision.clone(),
+            artifact_path: "model.safetensors".to_owned(),
+            relative_path: "objects/hf/qwen/model".to_owned(),
+            byte_length: 128,
+            range_start: Some(0),
+            range_end: Some(128),
+            etag: Some("\"etag\"".to_owned()),
+            digest_hex: None,
+            dtype: Some("F16".to_owned()),
+            shape_json: Some("[2,32]".to_owned()),
+            state: CacheValidationState::Valid,
+            reference_count: 1,
+            pinned: false,
+            last_used_at_unix_ms: 2,
+            created_at_unix_ms: 2,
+        };
+        store.upsert_model_cache_entry(&entry).expect("upsert cache");
+        let view = store
+            .model_cache_view(store.paths().cache_dir.display().to_string(), 0)
+            .expect("cache view");
+        assert_eq!(view.used_bytes, 128);
+        assert_eq!(view.protected_bytes, 128);
+        assert_eq!(view.entry_count, 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+

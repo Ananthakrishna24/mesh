@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 use crate::{
-    CapabilityReport, LinkMeasurement, MeasurementAgeState, MeshId, NodeId, PeerSummary,
-    ResourceManagerView, format_bits_per_second, format_bytes, measurement_age_state,
+    CapabilityReport, LinkMeasurement, MeasurementAgeState, MeshId, ModelStoreView, NodeId,
+    PeerSummary, ResourceManagerView, format_bits_per_second, format_bytes, measurement_age_state,
 };
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppScreen {
@@ -206,9 +207,11 @@ pub struct UiSnapshot {
     pub peers: Vec<PeerSummary>,
     pub hardware: Option<HardwareSummaryView>,
     pub resources: ResourceManagerView,
+    pub models: ModelStoreView,
     pub status_message: String,
     pub enrollment: EnrollmentProgress,
     pub can_create_invitation: bool,
+
 }
 
 impl UiSnapshot {
@@ -225,6 +228,7 @@ impl UiSnapshot {
             peers: Vec::new(),
             hardware: None,
             resources: ResourceManagerView::default(),
+            models: ModelStoreView::default(),
             status_message: "Starting local runtime…".to_owned(),
             enrollment: EnrollmentProgress {
                 steps: Vec::new(),
@@ -243,6 +247,6 @@ impl UiSnapshot {
         snapshot.phase = RuntimePhase::AwaitingOnboarding;
         snapshot.status_message = "Create a mesh or enroll this PC.".to_owned();
         snapshot
-
     }
 }
+

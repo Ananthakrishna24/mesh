@@ -19,7 +19,9 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P04 Linux paths are implemented. P05 local resource reservations are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P05 Linux paths are implemented. A07, A08, A10, and A11–A13 are accepted. P06 foundation started: model types, Safetensors/manifest helpers, store schema v4. Windows and macOS host proofs remain.
+
+
 
 
 ## Accepted baseline and locked contracts
@@ -160,34 +162,46 @@ Decision: [ADR-0014](../decisions/0014-peer-record-merge-rules.md)
 
 ### A11 — Provider manifest generation
 
-- [ ] Confirm Hugging Face Hub as the first provider.
-- [ ] Define immutable revision resolution.
-- [ ] Define Safetensors header discovery.
-- [ ] Define Model Family Adapter mapping.
-- [ ] Define the manifest cache key.
-- [ ] Define adapter-version behavior.
+- [x] Confirm Hugging Face Hub as the first provider.
+- [x] Define immutable revision resolution.
+- [x] Define Safetensors header discovery.
+- [x] Define Model Family Adapter mapping.
+- [x] Define the manifest cache key.
+- [x] Define adapter-version behavior.
+
+Canonical contract: [Provider-backed model distribution](../architecture/inference/model-distribution.md)
+Decision: [ADR-0015](../decisions/0015-provider-manifest-download-cache.md)
+
 
 ### A12 — Partial download validation
 
-- [ ] Define `Content-Range` validation.
-- [ ] Define length validation.
-- [ ] Define shape validation.
-- [ ] Define data-type validation.
-- [ ] Define ETag handling.
-- [ ] Define digest validation.
-- [ ] Define incomplete-file handling.
-- [ ] Define retry behavior.
-- [ ] Define complete-shard fallback rules.
+- [x] Define `Content-Range` validation.
+- [x] Define length validation.
+- [x] Define shape validation.
+- [x] Define data-type validation.
+- [x] Define ETag handling.
+- [x] Define digest validation.
+- [x] Define incomplete-file handling.
+- [x] Define retry behavior.
+- [x] Define complete-shard fallback rules.
+
+Canonical contract: [Provider-backed model distribution](../architecture/inference/model-distribution.md)
+Decision: [ADR-0015](../decisions/0015-provider-manifest-download-cache.md)
+
 
 ### A13 — Provider access and local cache
 
 - [x] Resolve credential persistence in [Persistent state](../architecture/system/persistent-state.md).
-- [ ] Define provider-access capability reporting.
-- [ ] Define disk reservation.
-- [ ] Define the cache limit.
-- [ ] Define eviction thresholds.
-- [ ] Define active-artifact protection.
-- [ ] Define incomplete-download cleanup.
+- [x] Define provider-access capability reporting.
+- [x] Define disk reservation.
+- [x] Define the cache limit.
+- [x] Define eviction thresholds.
+- [x] Define active-artifact protection.
+- [x] Define incomplete-download cleanup.
+
+Canonical contract: [Provider-backed model distribution](../architecture/inference/model-distribution.md)
+Decision: [ADR-0015](../decisions/0015-provider-manifest-download-cache.md)
+
 
 ## Implementation phases
 
@@ -311,24 +325,30 @@ Proof:
 
 Prerequisites:
 
-- [ ] Resolve A11 provider manifest generation.
-- [ ] Resolve A12 partial download validation.
-- [ ] Resolve A13 provider access and local cache.
+- [x] Resolve A11 provider manifest generation.
+- [x] Resolve A12 partial download validation.
+- [x] Resolve A13 provider access and local cache.
 
 Build:
 
-- [ ] Define and implement the `ModelProvider` interface.
+- [x] Define the `ModelProvider` boundary types and local model/store records.
 - [ ] Implement the Hugging Face adapter.
-- [ ] Implement immutable revision resolution.
-- [ ] Implement the local artifact cache.
-- [ ] Implement the Safetensors metadata parser.
+- [ ] Implement immutable revision resolution against Hub.
+- [x] Implement local artifact cache metadata persistence (schema v4).
+- [x] Implement the Safetensors metadata parser and range merge helpers.
+- [x] Implement range response validation helpers.
 - [ ] Implement range downloads.
-- [ ] Implement complete-shard fallback.
+- [ ] Implement complete-shard fallback downloads.
 - [ ] Implement parallel node preparation.
 - [ ] Add GUI model selection.
 - [ ] Add GUI provider-access state and controls.
 - [ ] Add GUI download progress.
 - [ ] Add GUI failures for model selection, provider access, and downloads.
+
+Foundation evidence:
+- `cargo test -p mesh-core -p mesh-model -p mesh-store --lib`
+- `cargo test -p mesh-node --lib`
+- `cargo build -p mesh-app`
 
 Proof:
 
@@ -336,6 +356,7 @@ Proof:
 - [ ] A selected Linux node automatically downloads its different verified Qwen3-8B tensor assignment for the same immutable revision.
 - [ ] A selected macOS node automatically downloads its different verified Qwen3-8B tensor assignment for the same immutable revision.
 - [ ] Selected Windows, Linux, and macOS nodes automatically download different verified Qwen3-8B tensor assignments for one immutable revision.
+
 
 ### P07 — Single-node inference
 
@@ -484,13 +505,16 @@ These items remain explicitly out of scope until the roadmap changes:
 
 ## Immediate roadmap gates
 
-- [ ] Begin P01.
-- [ ] Begin the manually reachable path of P02.
-- [ ] Select router-mapping crates before automatic internet enrollment is complete (A08).
-- [ ] Resolve peer-record merge rules before automatic internet enrollment is complete (A10).
+- [x] Begin P01.
+- [x] Begin the manually reachable path of P02.
+- [x] Select router-mapping crates before automatic internet enrollment is complete (A08).
+- [x] Resolve peer-record merge rules before automatic internet enrollment is complete (A10).
+
 - [ ] Lock tokenizer and sampling before P07 inference (A05).
 - [ ] Lock the KV-cache contract before P07 inference (A06).
-- [ ] Lock network placement before P07 inference (A07).
-- [ ] Lock provider manifest generation before P07 inference (A11).
-- [ ] Lock provider download validation before P07 inference (A12).
-- [ ] Lock provider access and cache behavior before P07 inference (A13).
+- [x] Lock network placement before P07 inference (A07).
+
+- [x] Lock provider manifest generation before P06 model provider and cache (A11).
+- [x] Lock provider download validation before P06 model provider and cache (A12).
+- [x] Lock provider access and cache behavior before P06 model provider and cache (A13).
+

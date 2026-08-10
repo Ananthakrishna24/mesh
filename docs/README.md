@@ -3,9 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Active design |
-| Current phase | A08 and A10 accepted; P04 automatic direct connectivity next |
+| Current phase | A11–A13 accepted; P06 model provider and cache next |
 | Implementation language | Rust |
 | First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
+
 
 This folder is the project memory. Read it before changing architecture or code.
 
@@ -57,6 +58,8 @@ This folder is the project memory. Read it before changing architecture or code.
 | How should the Rust repository be split? | [Rust workspace plan](implementation/rust-workspace.md) |
 | What remains to be decided and built? | [Architecture and implementation roadmap](implementation/roadmap.md) |
 | How is roadmap implementation progress tracked? | [Roadmap implementation checklist](implementation/checklist.md) |
+| How are provider manifests, range downloads, and cache eviction decided? | [Provider-backed model distribution](architecture/inference/model-distribution.md) and [ADR-0015](decisions/0015-provider-manifest-download-cache.md) |
+
 
 Do not copy a rule into several documents. Update the canonical document and link to it.
 
