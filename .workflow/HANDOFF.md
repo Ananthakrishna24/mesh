@@ -9,17 +9,15 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - A08/A10 contracts + store peer schema v2 / merge helpers (`c4610c2` and prior).
 - P04 automatic direct connectivity (`104816a`).
 - P05 resource reservations (`ae8d345`).
-- **P06 Linux implementation complete** (working tree may still be uncommitted — check `git status`):
-  - `mesh-store`: keyring credentials (`mesh.model-provider.huggingface` / `default`), `model_cache_dir`, schema v4.
-  - `mesh-model`: HF adapter (`hf-hub` 0.4 + explicit HTTP range), Qwen3 dense mapping, resolve/probe, range + complete-shard downloads, cache paths/publish/cleanup, prepare plans + disk netting, `FetchSource` trait.
-  - `mesh-node`: Model Store runtime wiring (select/probe/prepare/cancel/cache/token + progress events).
-  - `mesh-app`: dashboard Models card.
-  - Checklist/roadmap current-state updated for P06 build items.
-  - Verified: `cargo test -p mesh-core -p mesh-model -p mesh-store -p mesh-node --lib`; `cargo build -p mesh-app`.
-  - Proofs: `prepare_uses_complete_shard_for_high_coverage`; `model_selection_updates_snapshot`.
+- P06 Linux HF model provider/cache (`218e5de`).
+- **A05 + A06 locked** (`git log -1` after this session):
+  - `docs/architecture/inference/tokenizer-and-sampling.md` (A05)
+  - `docs/architecture/inference/kv-cache.md` (A06)
+  - `docs/decisions/0016-tokenizer-sampling-kv-cache.md`
+  - Roadmap/checklist/indexes updated; A05/A06 gates checked.
 
 # In progress
-- Nothing actively mid-edit. Next session should commit P06 if still dirty, then lock A05/A06 (or optional Linux HF smoke first).
+- Nothing mid-edit. Next is P07 single-node Qwen3-4B (Linux CUDA first).
 
 # Decisions
 - Phases are serial. Do not parallelize implementation phases (`AGENTS.md`).
@@ -48,7 +46,9 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - **P06 client stack:** `hf-hub 0.4` (tokio + rustls), explicit `reqwest` range path, `keyring 3` with `linux-native` (keyutils) — avoids dbus-dev on Linux.
 - Credential save failure → session-only token, surfaced truthfully.
 - Download engine uses `FetchSource` so unit tests fixture prepare without Hub.
-- **Windows is not parallel.** No Windows implementation track now. Windows earnest work starts at **P07.5** (manual GUI/enrollment/download/CUDA generate, then CI). End-of-project closes remaining Win/macOS P01–P05 host proofs. Multi-host P06 Qwen3-8B download proof needs real hosts later; do not block A05/A06/P07 on it.
+- **Windows is not parallel.** No Windows implementation track now. Windows earnest work starts at **P07.5** (manual GUI/enrollment/download/CUDA generate, then CI). End-of-project closes remaining Win/macOS P01–P05 host proofs. Multi-host P06 Qwen3-8B download proof needs real hosts later; do not block P07 on it.
+- **A05:** Coordinator owns tokenizer (`tokenizer_hash`), non-thinking chat template, encode/decode, UI streaming. First stage owns embeddings. Final stage owns lm_head, ChaCha12 RNG, penalty history, next-token selection. Defaults: T=0.7, top-p=0.8, top-k=20, rep=1.0, seed required, context 4096, thinking off. Sample order: penalty → temperature → top-k → top-p → sample. T=0 greedy, lowest-id ties, RNG not advanced. Final→first token-id feedback on control path; `TokenResult` to coordinator. Stop: eos / max_new_tokens / context_limit / cancelled / error.
+- **A06:** Per-stage FP16 K/V `[batch, num_kv_heads, seq_capacity, head_dim]`; GQA uses kv heads (8 for Qwen3-4B/8B); context 4096; batch 1; no sliding window / migration / wire KV / prefix cache. Estimate `2*batch*kv_heads*seq*head_dim*2*layers*concurrency` (+ overhead). Evict only on request terminal; never drop active KV. Cancel frees slots on every stage.
 
 # Gotchas
 - Quinn `SendStream::write_all` is inherent in this Quinn version.
@@ -75,22 +75,26 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Model cache root is `data_dir/model-cache` (sibling of `mesh.db`); HF client cache is under `cache_dir/hf-hub`.
 - First-run / cancel-enrollment snapshot resets must preserve `models` and `resources` views.
 - P06 multi-platform download proof boxes stay unchecked until real multi-host runs.
+- A05/A06 are docs-only locks; P07 must add protobuf fields for logical `InferenceRequest`/`TokenResult` content under reserved 40–42.
+- Cross-backend golden strings: temperature 0 only; temperature >0 not identical across CUDA vs Metal.
+- Qwen3-4B ties embeddings (`tie_word_embeddings=true`); Qwen3-8B does not — final stage still owns projection either way.
+- KV examples: ~16 MiB/layer at 4096 ctx FP16 GQA-8 head_dim-128; full 36-layer ~576 MiB before overhead.
 
 # Next
-1. **Commit** P06 working tree if `git status` is dirty (docs + code together is fine).
-2. Default product path: lock **A05** tokenizer/sampling ownership, then **A06** KV-cache contract (both required before P07).
-3. Optional Linux P06 smoke (network):
+1. Start **P07** single-node Qwen3-4B (Linux CUDA first):
+   - Dense Qwen3 Model Family Adapter (A01 implementation).
+   - Complete-stage load from P06 cache.
+   - Tokenizer + non-thinking template (A05).
+   - KV cache + seeded sampling (A06).
+   - Stream tokens in GUI.
+2. Optional anytime Linux smokes:
    ```bash
    MESH_DATA_DIR=/tmp/mesh-a cargo run --release
    ```
-   Create mesh → Models: Select Qwen3-4B → Check access → Probe/resolve → Prepare downloads.
-4. Optional anytime: dual-window enrollment:
-   ```bash
-   MESH_DATA_DIR=/tmp/mesh-a cargo run --release
-   MESH_DATA_DIR=/tmp/mesh-b cargo run --release
-   ```
-5. After A05/A06: start **P07** single-node Qwen3-4B (Linux CUDA first).
-6. **P07.5** is when Windows work starts. End of project: remaining Win/macOS host proofs.
+   Models: Select Qwen3-4B → Check access → Probe/resolve → Prepare.
+   Dual-window enrollment with `/tmp/mesh-a` and `/tmp/mesh-b`.
+3. After Linux P07 path works: macOS Metal / Windows CUDA proofs; then **P07.5** Windows confidence + CI.
+4. Do not start P08/P09 until P07 proof criteria are met on the active backend.
 
 # Resume map
 | Path | Role |
@@ -98,13 +102,12 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 | `AGENTS.md` | Agent coding/phase rules |
 | `docs/implementation/roadmap.md` | Canonical phase order |
 | `docs/implementation/checklist.md` | Progress checkboxes |
-| `docs/architecture/inference/model-distribution.md` | A11–A13 contract |
+| `docs/architecture/inference/tokenizer-and-sampling.md` | A05 contract |
+| `docs/architecture/inference/kv-cache.md` | A06 contract |
+| `docs/decisions/0016-tokenizer-sampling-kv-cache.md` | A05/A06 ADR |
 | `docs/architecture/inference/qwen3-model-family.md` | Family + stage ownership (A01/P07) |
-| `docs/decisions/0015-provider-manifest-download-cache.md` | A11–A13 ADR |
-| `crates/mesh-model/src/huggingface.rs` | HF resolve/probe/range/fetch |
-| `crates/mesh-model/src/download.rs` | Prepare plans + downloads |
-| `crates/mesh-model/src/adapter.rs` | Qwen3 dense mapping |
-| `crates/mesh-model/src/cache.rs` | Cache paths/cleanup |
-| `crates/mesh-store/src/credentials.rs` | HF token keyring adapter |
-| `crates/mesh-node/src/runtime.rs` | Model Store wiring |
-| `apps/mesh-app/src/app.rs` | Models dashboard card |
+| `docs/architecture/inference/model-distribution.md` | A11–A13 contract |
+| `crates/mesh-model/` | HF resolve/download/cache (P06) |
+| `crates/mesh-inference/` | P07 coordinator/worker home |
+| `crates/mesh-compute/` | CUDA/Metal stage kernels |
+| `apps/mesh-app/src/app.rs` | GUI streaming surface |
