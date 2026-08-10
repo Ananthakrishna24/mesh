@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 foundation is implemented on Linux: activation frame, placement types, mesh-owned partial `Qwen3Stage`, in-process two-stage pipeline runtime with cancel/queue bounds, and CUDA two-stage==complete token match on Qwen3-4B. Multi-node QUIC activation path, concurrent pipeline sequences, and Qwen3-8B distributed proof remain. Metal/Windows host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 multi-node path is implemented on Linux: activation frame, placement types, mesh-owned partial `Qwen3Stage`, in-process and dual-node QUIC pipeline runtime with cancel/queue bounds, NextTokenFeedback, and CUDA Qwen3-4B two-stage dual-node generate. Concurrent pipeline sequences and Qwen3-8B distributed proof remain. Metal/Windows host proofs remain.
 
 
 
@@ -459,12 +459,12 @@ Build:
 - [x] Implement the accepted activation wire format.
   - Evidence: 128-byte `ActivationHeader` encode/decode and `mesh-net` uni-stream frame I/O (`2026-08-10`).
 - [x] Implement the pipeline stage runtime.
-  - Evidence: in-process `PipelineEngine` prefill/decode across stages with FP16 activation handoff (`2026-08-10`).
+  - Evidence: in-process `PipelineEngine` prefill/decode across stages with FP16 activation handoff; multi-node `StageWorker` hop API + `mesh-node` stage load/control path (`2026-08-10`).
 - [x] Implement final-stage sampling.
   - Evidence: final stage owns logits + `Sampler`; greedy two-stage tokens match complete path on CUDA (`2026-08-10`).
 - [ ] Implement concurrent sequences.
 - [x] Implement cancellation.
-  - Evidence: `PipelineEngine::cancel` clears stage KV + inbound queues; request cancel checked each step (`2026-08-10`).
+  - Evidence: `PipelineEngine::cancel` clears stage KV + inbound queues; request cancel checked each step; multi-node `CancelRequest` cancels local pipeline request state (`2026-08-10`).
 - [x] Implement queue bounds.
   - Evidence: per-stage inbound queue capacity = `ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST` (`2026-08-10`).
 - [x] Implement backpressure.
@@ -473,7 +473,8 @@ Build:
 Proof:
 
 - [ ] The pinned Qwen3-8B model runs as continuous layer stages across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
-  - Linux in-process partial proof (Qwen3-4B two-stage == complete greedy tokens on CUDA): `MESH_P09_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke cargo test -p mesh-inference --lib --release --features cuda pipeline::tests::p09_two_stage_matches_complete_greedy -- --exact --nocapture` → `backend=cuda tokens=[9707, 0, 2585, 646] text="Hello! How can"` (`2026-08-10`). Multi-node QUIC activation path and Qwen3-8B remain.
+  - Linux in-process partial proof (Qwen3-4B two-stage == complete greedy tokens on CUDA): `MESH_P09_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke cargo test -p mesh-inference --lib --release --features cuda pipeline::tests::p09_two_stage_matches_complete_greedy -- --exact --nocapture` → `backend=cuda tokens=[9707, 0, 2585, 646] text="Hello! How can"` (`2026-08-10`).
+  - Linux dual-node QUIC partial proof (Qwen3-4B forced 2-stage First+Final on one host, activations over uni-streams): `MESH_P09_MULTI_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P09_MAX_NEW_TOKENS=4 cargo test -p mesh-node --lib --release --features cuda runtime::tests::p09_dual_node_pipeline_generate_smoke -- --exact --nocapture` → both stages `backend=cuda`, generate `tokens=4 stop=max_new_tokens output="Hello! How can"` (`2026-08-10`). Qwen3-8B and mixed-OS route remain.
 
 ### P10 — Failure and restart behavior
 

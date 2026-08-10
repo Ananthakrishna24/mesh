@@ -4,17 +4,20 @@ use mesh_core::protocol::proto::{
     IntroductionReady, PeerObserve, PeerRecord as ProtoPeer, PeerUpdate, control_envelope::Body,
 };
 use mesh_core::{
-    BandwidthMeasurement, CapabilityReport, DelayMeasurement, DeploymentId, EndpointCandidate,
-    InferenceRequestSpec, LinkMeasurement, LocalIdentity, NextTokenFeedback, NodeId, PeerRecord,
-    RequestId, ReservationCommit, ReservationRelease, ReserveAccepted, ReserveRejected,
-    ReserveRequest, ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms, random_message_id,
-    PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    ActivationHeader, BandwidthMeasurement, CapabilityReport, DelayMeasurement, DeploymentId,
+    EndpointCandidate, InferenceRequestSpec, LinkMeasurement, LocalIdentity, NextTokenFeedback,
+    NodeId, PeerRecord, RequestId, ReservationCommit, ReservationRelease, ReserveAccepted,
+    ReserveRejected, ReserveRequest, ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms,
+    random_message_id, PROTOCOL_MAJOR, PROTOCOL_MINOR,
 };
 use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::activation::{
+    read_activation_frame, send_activation_on_connection, ActivationFrame,
+};
 use crate::benchmark::{
     build_capability_envelope, capability_from_proto, default_bandwidth_payload,
     respond_bandwidth_receive, respond_bandwidth_send, respond_delay_benchmark,
@@ -127,6 +130,10 @@ pub enum SessionEvent {
         from_peer: NodeId,
         feedback: NextTokenFeedback,
     },
+    Activation {
+        from_peer: NodeId,
+        frame: ActivationFrame,
+    },
     Failed {
         peer_node_id: NodeId,
         message: String,
@@ -174,6 +181,10 @@ pub enum SessionCommand {
         reason: String,
     },
     SendNextTokenFeedback { feedback: NextTokenFeedback },
+    SendActivation {
+        header: ActivationHeader,
+        payload: Vec<u8>,
+    },
 }
 
 pub async fn run_connected_session(
@@ -306,7 +317,7 @@ async fn drive_session(
             command = commands.recv() => {
                 match command {
                     Some(command) => {
-                        handle_session_command(identity, send, command).await?;
+                        handle_session_command(identity, connection, send, command).await?;
                     }
                     None => return Ok(()),
                 }
@@ -329,12 +340,35 @@ async fn drive_session(
                 )
                 .await?;
             }
+            uni = connection.accept_uni() => {
+                match uni {
+                    Ok(mut stream) => {
+                        match read_activation_frame(&mut stream).await {
+                            Ok(frame) => {
+                                let _ = events
+                                    .send(SessionEvent::Activation {
+                                        from_peer: peer_node_id,
+                                        frame,
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                warn!(%error, %peer_node_id, "failed to read activation frame");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        return Err(NetError::Protocol(error.to_string()));
+                    }
+                }
+            }
         }
     }
 }
 
 async fn handle_session_command(
     identity: &LocalIdentity,
+    connection: &Connection,
     send: &mut SendStream,
     command: SessionCommand,
 ) -> NetResult<()> {
@@ -433,6 +467,9 @@ async fn handle_session_command(
         SessionCommand::SendNextTokenFeedback { feedback } => {
             let envelope = build_next_token_feedback_envelope(identity, &feedback);
             write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendActivation { header, payload } => {
+            send_activation_on_connection(connection, &header, &payload).await
         }
     }
 }

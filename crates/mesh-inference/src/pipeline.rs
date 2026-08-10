@@ -66,9 +66,9 @@ impl<T> BoundedQueue<T> {
 }
 
 #[derive(Debug, Clone)]
-struct PendingActivation {
-    header: ActivationHeader,
-    payload: Vec<u8>,
+pub struct StageActivation {
+    pub header: ActivationHeader,
+    pub payload: Vec<u8>,
 }
 
 pub struct StageWorker {
@@ -76,7 +76,7 @@ pub struct StageWorker {
     pub role: StageRole,
     pub layer_range: LayerRange,
     stage: Qwen3Stage,
-    inbound: BoundedQueue<PendingActivation>,
+    inbound: BoundedQueue<StageActivation>,
     cancelled: HashSet<RequestId>,
     next_transfer_id: HashMap<RequestId, u64>,
     active_requests: HashSet<RequestId>,
@@ -104,8 +104,61 @@ impl StageWorker {
         })
     }
 
+    pub fn load_from_prepared(
+        stage_index: u16,
+        role: StageRole,
+        layer_range: LayerRange,
+        resolved: &ResolvedModel,
+        prepared: &PrepareResult,
+        cache_root: &Path,
+        prefer_cuda: bool,
+        hf_tokenizer_path: Option<&Path>,
+    ) -> Result<Self, PipelineError> {
+        let prepared_files = prepared
+            .prepared
+            .iter()
+            .map(|item| {
+                (
+                    item.artifact_path.clone(),
+                    item.relative_path.clone(),
+                    item.range_start,
+                    item.range_end,
+                )
+            })
+            .collect::<Vec<_>>();
+        let weight_files = group_complete_weight_files(cache_root, &prepared_files)?;
+        let config_path = locate_sidecar(
+            cache_root,
+            hf_tokenizer_path.and_then(Path::parent),
+            &resolved.identity.repository,
+            &resolved.identity.revision,
+            "config.json",
+        )
+        .map_err(PipelineError::from)?;
+        Self::load(
+            stage_index,
+            role,
+            layer_range,
+            &config_path,
+            &weight_files,
+            prefer_cuda,
+        )
+    }
+
     pub fn backend(&self) -> mesh_compute::BackendKind {
         self.stage.backend
+    }
+
+    pub fn vocab_size(&self) -> u32 {
+        self.stage.vocab_size()
+    }
+
+    pub fn context_limit(&self) -> u32 {
+        self.stage.context_limit()
+    }
+
+    pub fn seq_len(&self) -> usize {
+        self.stage.seq_len()
     }
 
     pub fn reservation_memory_bytes(&self, weight_bytes: u64) -> u64 {
@@ -118,6 +171,21 @@ impl StageWorker {
             FIRST_MAX_CONCURRENT_REQUESTS,
             ALLOCATOR_OVERHEAD_BYTES,
         ))
+    }
+
+    pub fn begin_request(&mut self, request_id: RequestId) {
+        self.cancelled.remove(&request_id);
+        self.active_requests.insert(request_id);
+        self.stage.clear_kv_cache();
+        self.inbound.clear();
+        self.next_transfer_id.insert(request_id, 1);
+    }
+
+    pub fn finish_request(&mut self, request_id: RequestId) {
+        self.active_requests.remove(&request_id);
+        self.next_transfer_id.remove(&request_id);
+        self.stage.clear_kv_cache();
+        self.inbound.clear();
     }
 
     pub fn cancel(&mut self, request_id: RequestId) {
@@ -136,21 +204,14 @@ impl StageWorker {
         self.inbound.len()
     }
 
-    fn allocate_transfer_id(&mut self, request_id: RequestId) -> u64 {
-        let entry = self.next_transfer_id.entry(request_id).or_insert(1);
-        let id = *entry;
-        *entry = entry.saturating_add(1);
-        id
-    }
-
-    fn encode_outgoing(
+    pub fn encode_outgoing(
         &mut self,
         deployment_id: DeploymentId,
         request_id: RequestId,
         transfer_kind: TransferKind,
         sequence_position: u64,
         activation: &candle_core::Tensor,
-    ) -> Result<PendingActivation, PipelineError> {
+    ) -> Result<StageActivation, PipelineError> {
         let (batch, sequence, hidden) = activation.dims3().map_err(mesh_compute::ComputeError::from)?;
         let transfer_id = self.allocate_transfer_id(request_id);
         let header = ActivationHeader::qwen3_hidden(
@@ -170,12 +231,12 @@ impl StageWorker {
             .stage
             .activation_to_fp16_bytes(activation)
             .map_err(PipelineError::from)?;
-        Ok(PendingActivation { header, payload })
+        Ok(StageActivation { header, payload })
     }
 
-    fn decode_incoming(
+    pub fn decode_incoming(
         &self,
-        pending: &PendingActivation,
+        pending: &StageActivation,
     ) -> Result<candle_core::Tensor, PipelineError> {
         let dims = pending.header.used_dimensions();
         if dims.len() != 3 {
@@ -192,6 +253,135 @@ impl StageWorker {
             )
             .map_err(PipelineError::from)
     }
+
+    pub fn prefill_from_tokens(
+        &mut self,
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        token_ids: &[u32],
+    ) -> Result<StageHop, PipelineError> {
+        if self.is_cancelled(request_id) {
+            return Err(PipelineError::Message("request cancelled".to_owned()));
+        }
+        if !self.role.accepts_token_ids() {
+            return Err(PipelineError::Message(format!(
+                "stage role {} rejects token ids",
+                self.role.as_str()
+            )));
+        }
+        self.begin_request(request_id);
+        let activation = self.stage.prefill_tokens(token_ids)?;
+        self.hop_from_hidden(deployment_id, request_id, TransferKind::Prefill, 0, &activation)
+    }
+
+    pub fn decode_from_token(
+        &mut self,
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        token_id: u32,
+    ) -> Result<StageHop, PipelineError> {
+        if self.is_cancelled(request_id) {
+            return Err(PipelineError::Message("request cancelled".to_owned()));
+        }
+        if !self.role.accepts_token_ids() {
+            return Err(PipelineError::Message(format!(
+                "stage role {} rejects token ids",
+                self.role.as_str()
+            )));
+        }
+        let sequence_position = self.stage.seq_len() as u64;
+        let activation = self.stage.decode_token(token_id)?;
+        self.hop_from_hidden(
+            deployment_id,
+            request_id,
+            TransferKind::Decode,
+            sequence_position,
+            &activation,
+        )
+    }
+
+    pub fn forward_activation(
+        &mut self,
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        incoming: StageActivation,
+    ) -> Result<StageHop, PipelineError> {
+        if self.is_cancelled(request_id) {
+            return Err(PipelineError::Message("request cancelled".to_owned()));
+        }
+        if incoming.header.request_id != request_id {
+            return Err(PipelineError::Message(
+                "activation request_id mismatch".to_owned(),
+            ));
+        }
+        if incoming.header.destination_stage != self.stage_index {
+            return Err(PipelineError::Message(
+                "activation destination stage mismatch".to_owned(),
+            ));
+        }
+        self.inbound.push(incoming)?;
+        let queued = self
+            .inbound
+            .pop()
+            .ok_or_else(|| PipelineError::Message("missing queued activation".to_owned()))?;
+        let tensor = self.decode_incoming(&queued)?;
+        let activation = match queued.header.transfer_kind {
+            TransferKind::Prefill => {
+                self.begin_request(request_id);
+                self.stage.prefill_activation(&tensor)?
+            }
+            TransferKind::Decode => self.stage.decode_activation(&tensor)?,
+        };
+        self.hop_from_hidden(
+            deployment_id,
+            request_id,
+            queued.header.transfer_kind,
+            queued.header.sequence_position,
+            &activation,
+        )
+    }
+
+    pub fn logits_from_hidden(
+        &self,
+        hidden: &candle_core::Tensor,
+    ) -> Result<Vec<f32>, PipelineError> {
+        self.stage.logits_from_hidden(hidden).map_err(Into::into)
+    }
+
+    fn hop_from_hidden(
+        &mut self,
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        transfer_kind: TransferKind,
+        sequence_position: u64,
+        activation: &candle_core::Tensor,
+    ) -> Result<StageHop, PipelineError> {
+        if self.role.emits_logits() {
+            let logits = self.stage.logits_from_hidden(activation)?;
+            return Ok(StageHop::Logits(logits));
+        }
+        let outgoing = self.encode_outgoing(
+            deployment_id,
+            request_id,
+            transfer_kind,
+            sequence_position,
+            activation,
+        )?;
+        Ok(StageHop::Activation(outgoing))
+    }
+
+    fn allocate_transfer_id(&mut self, request_id: RequestId) -> u64 {
+        let entry = self.next_transfer_id.entry(request_id).or_insert(1);
+        let id = *entry;
+        *entry = entry.saturating_add(1);
+        id
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StageHop {
+    Activation(StageActivation),
+    Logits(Vec<f32>),
 }
 
 pub struct PipelineEngine {
@@ -407,46 +597,17 @@ impl PipelineEngine {
                 .stages
                 .first_mut()
                 .ok_or_else(|| PipelineError::Message("missing first stage".to_owned()))?;
-            if first.is_cancelled(request_id) {
-                return Err(PipelineError::Message("request cancelled".to_owned()));
+            match first.prefill_from_tokens(self.deployment_id, request_id, prompt_token_ids)? {
+                StageHop::Logits(logits) => return Ok(logits),
+                StageHop::Activation(activation) => activation,
             }
-            let activation = first.stage.prefill_tokens(prompt_token_ids)?;
-            if first.role.emits_logits() {
-                return first.stage.logits_from_hidden(&activation).map_err(Into::into);
-            }
-            first.encode_outgoing(
-                self.deployment_id,
-                request_id,
-                TransferKind::Prefill,
-                0,
-                &activation,
-            )?
         };
 
         for index in 1..self.stages.len() {
-            if self.stages[index].is_cancelled(request_id) {
-                return Err(PipelineError::Message("request cancelled".to_owned()));
+            match self.stages[index].forward_activation(self.deployment_id, request_id, pending)? {
+                StageHop::Logits(logits) => return Ok(logits),
+                StageHop::Activation(activation) => pending = activation,
             }
-            self.stages[index].inbound.push(pending)?;
-            let queued = self.stages[index]
-                .inbound
-                .pop()
-                .ok_or_else(|| PipelineError::Message("missing queued activation".to_owned()))?;
-            let tensor = self.stages[index].decode_incoming(&queued)?;
-            let activation = self.stages[index].stage.prefill_activation(&tensor)?;
-            if index + 1 == self.stages.len() {
-                return self.stages[index]
-                    .stage
-                    .logits_from_hidden(&activation)
-                    .map_err(Into::into);
-            }
-            pending = self.stages[index].encode_outgoing(
-                self.deployment_id,
-                request_id,
-                TransferKind::Prefill,
-                queued.header.sequence_position,
-                &activation,
-            )?;
         }
 
         Err(PipelineError::Message(
@@ -459,59 +620,22 @@ impl PipelineEngine {
         request_id: RequestId,
         token_id: u32,
     ) -> Result<Vec<f32>, PipelineError> {
-        let sequence_position = {
-            let first = self
-                .stages
-                .first()
-                .ok_or_else(|| PipelineError::Message("missing first stage".to_owned()))?;
-            first.stage.seq_len() as u64
-        };
-
         let mut pending = {
             let first = self
                 .stages
                 .first_mut()
                 .ok_or_else(|| PipelineError::Message("missing first stage".to_owned()))?;
-            if first.is_cancelled(request_id) {
-                return Err(PipelineError::Message("request cancelled".to_owned()));
+            match first.decode_from_token(self.deployment_id, request_id, token_id)? {
+                StageHop::Logits(logits) => return Ok(logits),
+                StageHop::Activation(activation) => activation,
             }
-            let activation = first.stage.decode_token(token_id)?;
-            if first.role.emits_logits() {
-                return first.stage.logits_from_hidden(&activation).map_err(Into::into);
-            }
-            first.encode_outgoing(
-                self.deployment_id,
-                request_id,
-                TransferKind::Decode,
-                sequence_position,
-                &activation,
-            )?
         };
 
         for index in 1..self.stages.len() {
-            if self.stages[index].is_cancelled(request_id) {
-                return Err(PipelineError::Message("request cancelled".to_owned()));
+            match self.stages[index].forward_activation(self.deployment_id, request_id, pending)? {
+                StageHop::Logits(logits) => return Ok(logits),
+                StageHop::Activation(activation) => pending = activation,
             }
-            self.stages[index].inbound.push(pending)?;
-            let queued = self.stages[index]
-                .inbound
-                .pop()
-                .ok_or_else(|| PipelineError::Message("missing queued activation".to_owned()))?;
-            let tensor = self.stages[index].decode_incoming(&queued)?;
-            let activation = self.stages[index].stage.decode_activation(&tensor)?;
-            if index + 1 == self.stages.len() {
-                return self.stages[index]
-                    .stage
-                    .logits_from_hidden(&activation)
-                    .map_err(Into::into);
-            }
-            pending = self.stages[index].encode_outgoing(
-                self.deployment_id,
-                request_id,
-                TransferKind::Decode,
-                queued.header.sequence_position,
-                &activation,
-            )?;
         }
 
         Err(PipelineError::Message(

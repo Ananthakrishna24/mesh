@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node Qwen3 complete-stage path is implemented with Linux CPU and CUDA host proofs. P08 full-model replica advertisement, least-loaded routing, concurrency slots, and remote InferenceRequest/TokenResult path are implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 foundation is implemented on Linux: activation frame, placement types, mesh-owned partial stages, in-process pipeline runtime with cancel/queue bounds/backpressure, NextTokenFeedback control message, and CUDA two-stage==complete token match on Qwen3-4B. Multi-node QUIC activation serving, concurrent pipeline sequences, and Qwen3-8B distributed proof remain. Windows/macOS proofs remain deferred.
+P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node Qwen3 complete-stage path is implemented with Linux CPU and CUDA host proofs. P08 full-model replica advertisement, least-loaded routing, concurrency slots, and remote InferenceRequest/TokenResult path are implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 multi-node path is implemented on Linux: activation frame, placement types, mesh-owned partial stages, in-process and dual-node QUIC pipeline runtime with cancel/queue bounds/backpressure, NextTokenFeedback control message, CUDA two-stage==complete token match on Qwen3-4B, and dual-node Qwen3-4B generate over activation streams. Concurrent pipeline sequences and Qwen3-8B distributed/mixed-OS proof remain.
 
 
 

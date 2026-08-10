@@ -13,27 +13,31 @@ use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
     AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_CACHE_MAX_BYTES,
     DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress,
-    GpuResourceAmount, HardwareSummaryView, InferencePhase, InferenceRequestSpec, LinkMeasurement,
-    LocalIdentity, LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView,
-    ModelDownloadProgress, ModelReference, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary,
-    ProviderAccessReport, ProviderAuthMode, RecoveryAction, ReplicaEndpointView, ReplicaHealth,
-    RequestId, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest, ResourceAmount,
-    ResourceQuery, RuntimePhase, SamplingParams, StopReason, TokenResultEvent, UiCommand, UiSnapshot,
+    GpuResourceAmount, HardwareSummaryView, InferencePhase, InferenceRequestSpec, LayerRange,
+    LinkMeasurement, LocalIdentity, LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView,
+    ModelDownloadProgress, ModelReference, NextTokenFeedback, NodeId, PeerRecord, PeerRecordOrigin,
+    PeerSummary, PlacementPlan, ProviderAccessReport, ProviderAuthMode, RecoveryAction,
+    ReplicaEndpointView, ReplicaHealth, RequestId, ReservationCommit, ReservationId,
+    ReservationRelease, ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams,
+    StageAssignment, StageRole, StopReason, TokenResultEvent, UiCommand, UiSnapshot,
     filter_advertised_candidates, merge_peer_records, now_unix_ms, select_replica_route,
     sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
-use mesh_inference::{load_mesh_tokenizer, LocalResourceManager, MeshTokenizer, ReserveOutcome, SingleNodeEngine};
+use mesh_inference::{
+    load_mesh_tokenizer, LocalResourceManager, MeshTokenizer, ReserveOutcome, Sampler,
+    SingleNodeEngine, StageActivation, StageHop, StageWorker,
+};
 use mesh_model::{
     DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
     build_complete_plan, cleanup_incomplete, prepare_plan,
 };
 use mesh_net::{
-    EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint, ReplicaStatusMessage,
-    RouterMappingHandle, SessionCommand, SessionEvent, advertised_candidates, attempt_router_mapping,
-    collect_local_candidates, complete_inviter_handshake, generate_node_certificate,
-    new_attempt_id, perform_joiner_handshake, run_connected_session, send_udp_probes,
-    start_at_after, wait_until_unix_ms, with_manual_candidate, with_peer_observed,
+    ActivationFrame, EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint,
+    ReplicaStatusMessage, RouterMappingHandle, SessionCommand, SessionEvent, advertised_candidates,
+    attempt_router_mapping, collect_local_candidates, complete_inviter_handshake,
+    generate_node_certificate, new_attempt_id, perform_joiner_handshake, run_connected_session,
+    send_udp_probes, start_at_after, wait_until_unix_ms, with_manual_candidate, with_peer_observed,
     with_router_mapping,
 };
 use mesh_store::{
@@ -343,6 +347,7 @@ enum RuntimeEvent {
     ModelPrepared(Result<PrepareResult, String>),
     ModelProgress(ModelDownloadProgress),
     ModelLoaded(Result<Box<SingleNodeEngine>, String>),
+    PipelineStageLoaded(Result<Box<LocalPipelineStage>, String>),
     GenerationFinished {
         prompt: String,
         engine: Box<SingleNodeEngine>,
@@ -350,7 +355,6 @@ enum RuntimeEvent {
         request_id: RequestId,
         remote_owner: Option<NodeId>,
     },
-    // reserved for future mid-stream remote token fan-in on the runtime event bus
 }
 
 struct LiveSession {
@@ -363,11 +367,32 @@ struct PendingRemoteGeneration {
     deployment_id: DeploymentId,
     prompt: String,
     token_ids: Vec<u32>,
+    pipeline: bool,
 }
 
 struct ServingRemoteRequest {
     owner_node_id: NodeId,
     cancel: watch::Sender<bool>,
+}
+
+struct LocalPipelineStage {
+    placement: PlacementPlan,
+    assignment: StageAssignment,
+    worker: StageWorker,
+    model_line: String,
+}
+
+struct PipelineRequestState {
+    #[allow(dead_code)]
+    request_id: RequestId,
+    deployment_id: DeploymentId,
+    owner_node_id: NodeId,
+    first_stage_node: NodeId,
+    next_stage_node: Option<NodeId>,
+    sampler: Option<Sampler>,
+    sampling: SamplingParams,
+    prompt_len: u32,
+    stop_token_ids: Vec<u32>,
 }
 
 pub struct NodeRuntime {
@@ -396,6 +421,8 @@ pub struct NodeRuntime {
     resolved_model: Option<ResolvedModel>,
     last_prepare: Option<PrepareResult>,
     inference_engine: Option<SingleNodeEngine>,
+    pipeline_stage: Option<LocalPipelineStage>,
+    pipeline_requests: HashMap<RequestId, PipelineRequestState>,
     coordinator_tokenizer: Option<MeshTokenizer>,
     generation_cancel: Option<watch::Sender<bool>>,
     local_active_requests: u32,
@@ -460,6 +487,8 @@ impl NodeRuntime {
             resolved_model: None,
             last_prepare: None,
             inference_engine: None,
+            pipeline_stage: None,
+            pipeline_requests: HashMap::new(),
             coordinator_tokenizer: None,
             generation_cancel: None,
             local_active_requests: 0,
@@ -801,6 +830,29 @@ impl NodeRuntime {
                 self.publish();
                 false
             }
+            UiCommand::LoadPipelineStage {
+                deployment_id,
+                model_line,
+                num_layers,
+                stage_index,
+                role,
+                layer_start,
+                layer_end,
+                node_ids,
+            } => {
+                self.spawn_pipeline_stage_load(
+                    deployment_id,
+                    model_line,
+                    num_layers,
+                    stage_index,
+                    role,
+                    layer_start,
+                    layer_end,
+                    node_ids,
+                );
+                self.publish();
+                false
+            }
             UiCommand::UnloadModel => {
                 self.unload_model();
                 self.publish();
@@ -900,6 +952,10 @@ impl NodeRuntime {
             }
             RuntimeEvent::ModelLoaded(result) => {
                 self.on_model_loaded(result);
+                self.publish();
+            }
+            RuntimeEvent::PipelineStageLoaded(result) => {
+                self.on_pipeline_stage_loaded(result);
                 self.publish();
             }
             RuntimeEvent::GenerationFinished {
@@ -1067,7 +1123,7 @@ impl NodeRuntime {
                 request_id,
                 reason,
             } => {
-                let _ = (from_peer, deployment_id, reason);
+                let _ = (from_peer, reason);
                 if let Some(serving) = self.serving_remote_requests.get(&request_id) {
                     let _ = serving.cancel.send(true);
                 }
@@ -1076,12 +1132,19 @@ impl NodeRuntime {
                         let _ = cancel.send(true);
                     }
                 }
+                self.cancel_pipeline_request(deployment_id, request_id);
+                self.publish();
             }
             SessionEvent::NextTokenFeedback {
                 from_peer,
                 feedback,
             } => {
-                let _ = (from_peer, feedback);
+                self.on_pipeline_next_token_feedback(from_peer, feedback);
+                self.publish();
+            }
+            SessionEvent::Activation { from_peer, frame } => {
+                self.on_pipeline_activation(from_peer, frame);
+                self.publish();
             }
             SessionEvent::Failed {
                 peer_node_id,
@@ -1092,6 +1155,7 @@ impl NodeRuntime {
                 self.release_owner_reservations(peer_node_id);
                 self.fail_pending_remote_for_peer(peer_node_id, message.clone());
                 self.cancel_serving_for_peer(peer_node_id);
+                self.cancel_pipeline_for_peer(peer_node_id);
                 if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
                     peer.connected = false;
                     peer.replica_ready = false;
@@ -2484,6 +2548,12 @@ impl NodeRuntime {
         self.local_active_requests = 0;
         self.local_generation_request_id = None;
         self.inference_engine = None;
+        if let Some(mut stage) = self.pipeline_stage.take() {
+            for request_id in self.pipeline_requests.keys().copied().collect::<Vec<_>>() {
+                stage.worker.cancel(request_id);
+            }
+        }
+        self.pipeline_requests.clear();
         self.state.snapshot.inference = mesh_core::InferenceView::idle();
         self.refresh_replica_views();
         self.broadcast_replica_status();
@@ -2516,6 +2586,10 @@ impl NodeRuntime {
             seed,
             max_new_tokens: max_new_tokens.max(1),
         };
+
+        if self.try_spawn_pipeline_generation(prompt.clone(), params).is_some() {
+            return;
+        }
 
         self.refresh_replica_views();
         let preferred_model = self
@@ -2591,6 +2665,7 @@ impl NodeRuntime {
             deployment_id,
             prompt: prompt.clone(),
             token_ids: Vec::new(),
+            pipeline: false,
         });
         if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
             peer.replica_active_requests = peer.replica_active_requests.saturating_add(1);
@@ -2823,6 +2898,16 @@ impl NodeRuntime {
         from_peer: NodeId,
         request: InferenceRequestSpec,
     ) {
+        if self.pipeline_stage.as_ref().is_some_and(|stage| {
+            matches!(
+                stage.assignment.role,
+                StageRole::First | StageRole::Final | StageRole::Complete
+            )
+        }) {
+            self.on_pipeline_inference_request(from_peer, request);
+            return;
+        }
+
         let reject = |this: &mut Self, reason: String| {
             if let Some(session) = this.sessions.get(&from_peer) {
                 let event = TokenResultEvent {
@@ -2890,7 +2975,6 @@ impl NodeRuntime {
             });
         });
     }
-
     fn on_remote_token(&mut self, event: TokenResultEvent) {
         let Some(pending) = self.pending_remote_generation.as_mut() else {
             return;
@@ -2949,11 +3033,845 @@ impl NodeRuntime {
             self.refresh_replica_views();
         }
     }
+    fn spawn_pipeline_stage_load(
+        &mut self,
+        deployment_id: String,
+        model_line: String,
+        num_layers: u32,
+        stage_index: u16,
+        role: StageRole,
+        layer_start: u32,
+        layer_end: u32,
+        node_ids: Vec<String>,
+    ) {
+        let Some(resolved) = self.resolved_model.clone() else {
+            self.state.snapshot.inference.error =
+                Some("Probe/resolve the model before pipeline load.".to_owned());
+            return;
+        };
+        let Some(prepared) = self.last_prepare.clone() else {
+            self.state.snapshot.inference.error =
+                Some("Prepare downloads before pipeline load.".to_owned());
+            return;
+        };
+        if self.state.snapshot.inference.busy {
+            return;
+        }
+        let Ok(deployment_id) = DeploymentId::parse_hex(&deployment_id) else {
+            self.state.snapshot.inference.error = Some("Invalid deployment id.".to_owned());
+            return;
+        };
+        let mut parsed_nodes = Vec::with_capacity(node_ids.len());
+        for node_id in &node_ids {
+            match NodeId::parse_hex(node_id) {
+                Ok(id) => parsed_nodes.push(id),
+                Err(error) => {
+                    self.state.snapshot.inference.error =
+                        Some(format!("Invalid pipeline node id: {error}"));
+                    return;
+                }
+            }
+        }
+        let layer_range = match LayerRange::new(layer_start, layer_end) {
+            Ok(range) => range,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error);
+                return;
+            }
+        };
+        let stages = parsed_nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node_id)| {
+                let expected_role = if parsed_nodes.len() == 1 {
+                    StageRole::Complete
+                } else if index == 0 {
+                    StageRole::First
+                } else if index + 1 == parsed_nodes.len() {
+                    StageRole::Final
+                } else {
+                    StageRole::Middle
+                };
+                let range = if index as u16 == stage_index {
+                    layer_range
+                } else {
+                    // placeholder ranges filled only for validation of local assignment shape;
+                    // full plan is rebuilt via split_even below.
+                    LayerRange::new(0, 1).unwrap_or(layer_range)
+                };
+                StageAssignment {
+                    stage_index: index as u16,
+                    role: expected_role,
+                    node_id: *node_id,
+                    layer_range: range,
+                }
+            })
+            .collect::<Vec<_>>();
+        let _ = stages;
+        let placement = match PlacementPlan::split_even(
+            deployment_id,
+            model_line.clone(),
+            num_layers,
+            &parsed_nodes,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error);
+                return;
+            }
+        };
+        let Some(assignment) = placement
+            .stages
+            .iter()
+            .find(|stage| stage.stage_index == stage_index)
+            .cloned()
+        else {
+            self.state.snapshot.inference.error =
+                Some(format!("stage_index {stage_index} missing from placement"));
+            return;
+        };
+        if assignment.role != role
+            || assignment.layer_range.start != layer_start
+            || assignment.layer_range.end != layer_end
+        {
+            self.state.snapshot.inference.error = Some(
+                "LoadPipelineStage assignment does not match split_even placement".to_owned(),
+            );
+            return;
+        }
+        let local_id = self.state.identity.as_ref().map(|identity| identity.node_id);
+        if local_id != Some(assignment.node_id) {
+            self.state.snapshot.inference.error =
+                Some("LoadPipelineStage node_id is not this local node".to_owned());
+            return;
+        }
+
+        let cache_root = self.paths.model_cache_dir.clone();
+        let event_tx = self.event_tx.clone();
+        self.state.snapshot.inference.busy = true;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Loading);
+        self.state.snapshot.inference.error = None;
+        self.state.snapshot.inference.status_line = format!(
+            "Loading pipeline stage {} ({})…",
+            assignment.stage_index,
+            assignment.role.as_str()
+        );
+        self.state.set_status("Loading pipeline stage…");
+        tokio::task::spawn_blocking(move || {
+            let result = StageWorker::load_from_prepared(
+                assignment.stage_index,
+                assignment.role,
+                assignment.layer_range,
+                &resolved,
+                &prepared,
+                &cache_root,
+                true,
+                None,
+            )
+            .map(|worker| {
+                Box::new(LocalPipelineStage {
+                    placement,
+                    assignment,
+                    worker,
+                    model_line,
+                })
+            })
+            .map_err(|error| error.to_string());
+            let _ = event_tx.blocking_send(RuntimeEvent::PipelineStageLoaded(result));
+        });
+    }
+
+    fn on_pipeline_stage_loaded(&mut self, result: Result<Box<LocalPipelineStage>, String>) {
+        self.state.snapshot.inference.busy = false;
+        match result {
+            Ok(stage) => {
+                self.inference_engine = None;
+                self.pipeline_requests.clear();
+                self.ensure_coordinator_tokenizer();
+                self.state.snapshot.inference.phase = Some(InferencePhase::Ready);
+                self.state.snapshot.inference.error = None;
+                self.state.snapshot.inference.deployment_id =
+                    Some(stage.placement.deployment_id.to_string());
+                self.state.snapshot.inference.model_line = Some(stage.model_line.clone());
+                self.state.snapshot.inference.backend =
+                    Some(stage.worker.backend().as_str().to_owned());
+                self.state.snapshot.inference.status_line = format!(
+                    "Pipeline stage {} ready ({}) on {}",
+                    stage.assignment.stage_index,
+                    stage.assignment.role.as_str(),
+                    stage.worker.backend().as_str()
+                );
+                self.state.set_status(format!(
+                    "Pipeline stage {} ready.",
+                    stage.assignment.stage_index
+                ));
+                self.pipeline_stage = Some(*stage);
+                self.local_active_requests = 0;
+                self.refresh_replica_views();
+                self.broadcast_replica_status();
+            }
+            Err(error) => {
+                self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+                self.state.snapshot.inference.error = Some(error.clone());
+                self.state.snapshot.inference.status_line = "Pipeline stage load failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
+    fn try_spawn_pipeline_generation(
+        &mut self,
+        prompt: String,
+        params: SamplingParams,
+    ) -> Option<()> {
+        let stage = self.pipeline_stage.as_ref()?;
+        let placement = stage.placement.clone();
+        let first = placement.stages.first()?.clone();
+        let final_stage = placement.stages.last()?.clone();
+        let deployment_id = placement.deployment_id;
+        let model_line = stage.model_line.clone();
+        let backend = stage.worker.backend().as_str().to_owned();
+        let local_id = self.state.identity.as_ref().map(|identity| identity.node_id)?;
+
+        let tokenizer = self.coordinator_tokenizer.as_ref()?;
+        let token_ids = match tokenizer.encode_chat(None, &prompt) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error.to_string());
+                return Some(());
+            }
+        };
+        let prompt_len = token_ids.len() as u32;
+        let request_id = RequestId::new();
+        let request = InferenceRequestSpec {
+            deployment_id,
+            request_id,
+            input_token_ids: token_ids,
+            sampling: params,
+            stop_token_ids: Vec::new(),
+            return_logprobs: false,
+        };
+
+        // Ensure final stage has sampling state before first activation arrives.
+        if final_stage.node_id == local_id {
+            self.seed_final_pipeline_request(&request, local_id, prompt_len);
+        } else if let Some(session) = self.sessions.get(&final_stage.node_id) {
+            let _ = session.commands.try_send(SessionCommand::SendInferenceRequest {
+                request: request.clone(),
+            });
+        }
+
+        if first.node_id == local_id {
+            self.on_pipeline_inference_request(local_id, request);
+        } else {
+            let session = self.sessions.get(&first.node_id)?;
+            if session
+                .commands
+                .try_send(SessionCommand::SendInferenceRequest {
+                    request: request.clone(),
+                })
+                .is_err()
+            {
+                self.state.snapshot.inference.error =
+                    Some("Failed to send pipeline inference request.".to_owned());
+                return Some(());
+            }
+        }
+
+        self.pending_remote_generation = Some(PendingRemoteGeneration {
+            peer_node_id: first.node_id,
+            request_id,
+            deployment_id,
+            prompt: prompt.clone(),
+            token_ids: Vec::new(),
+            pipeline: true,
+        });
+        self.state.snapshot.inference.busy = true;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Generating);
+        self.state.snapshot.inference.prompt = prompt;
+        self.state.snapshot.inference.output_text.clear();
+        self.state.snapshot.inference.error = None;
+        self.state.snapshot.inference.stop_reason = None;
+        self.state.snapshot.inference.generated_tokens = 0;
+        self.state.snapshot.inference.last_token_id = None;
+        self.state.snapshot.inference.routed_node_id = Some(first.node_id.to_string());
+        self.state.snapshot.inference.model_line = Some(model_line);
+        self.state.snapshot.inference.backend = Some(backend);
+        self.state.snapshot.inference.deployment_id = Some(deployment_id.to_string());
+        self.state.snapshot.inference.status_line = "Generating on pipeline…".to_owned();
+        self.state.set_status("Pipeline generation started.");
+        Some(())
+    }
+
+    fn seed_final_pipeline_request(
+        &mut self,
+        request: &InferenceRequestSpec,
+        owner_node_id: NodeId,
+        prompt_len: u32,
+    ) {
+        let Some(stage) = self.pipeline_stage.as_ref() else {
+            return;
+        };
+        if !stage.assignment.role.emits_logits() {
+            return;
+        }
+        if stage.placement.deployment_id != request.deployment_id {
+            return;
+        }
+        let first_stage_node = stage
+            .placement
+            .stages
+            .first()
+            .map(|item| item.node_id)
+            .unwrap_or(stage.assignment.node_id);
+        self.pipeline_requests
+            .entry(request.request_id)
+            .and_modify(|state| {
+                state.sampling = request.sampling;
+                state.prompt_len = prompt_len;
+                state.stop_token_ids = request.stop_token_ids.clone();
+            })
+            .or_insert(PipelineRequestState {
+                request_id: request.request_id,
+                deployment_id: request.deployment_id,
+                owner_node_id,
+                first_stage_node,
+                next_stage_node: None,
+                sampler: None,
+                sampling: request.sampling,
+                prompt_len,
+                stop_token_ids: request.stop_token_ids.clone(),
+            });
+    }
+
+    fn on_pipeline_inference_request(&mut self, from_peer: NodeId, request: InferenceRequestSpec) {
+        let Some(stage_role) = self.pipeline_stage.as_ref().map(|stage| stage.assignment.role) else {
+            self.reject_pipeline_request(from_peer, &request, "no local pipeline stage".to_owned());
+            return;
+        };
+
+        if stage_role.emits_logits() && stage_role != StageRole::First && stage_role != StageRole::Complete
+        {
+            let prompt_len = request.input_token_ids.len() as u32;
+            self.seed_final_pipeline_request(&request, from_peer, prompt_len);
+            return;
+        }
+
+        if stage_role != StageRole::First && stage_role != StageRole::Complete {
+            self.reject_pipeline_request(from_peer, &request, "local stage rejects token ids".to_owned());
+            return;
+        }
+
+        let reject_reason = {
+            let stage = self.pipeline_stage.as_ref().unwrap();
+            if stage.placement.deployment_id != request.deployment_id {
+                Some("deployment mismatch".to_owned())
+            } else if !self.pipeline_requests.is_empty() && stage_role == StageRole::First {
+                // Final may already be seeded under same request id when local is complete-only.
+                if !self.pipeline_requests.contains_key(&request.request_id) {
+                    Some("pipeline stage busy".to_owned())
+                } else {
+                    None
+                }
+            } else if self.local_active_requests > 0 && !self.pipeline_requests.contains_key(&request.request_id)
+            {
+                Some("pipeline stage busy".to_owned())
+            } else {
+                None
+            }
+        };
+        if let Some(reason) = reject_reason {
+            self.reject_pipeline_request(from_peer, &request, reason);
+            return;
+        }
+
+        let (next_stage_node, first_stage_node, deployment_ok) = {
+            let stage = self.pipeline_stage.as_ref().unwrap();
+            (
+                stage
+                    .placement
+                    .stages
+                    .get(stage.assignment.stage_index as usize + 1)
+                    .map(|item| item.node_id),
+                stage.assignment.node_id,
+                stage.placement.deployment_id == request.deployment_id,
+            )
+        };
+        if !deployment_ok {
+            self.reject_pipeline_request(from_peer, &request, "deployment mismatch".to_owned());
+            return;
+        }
+
+        // Forward sampling state to final before activations arrive.
+        if let Some(next) = next_stage_node {
+            if let Some(session) = self.sessions.get(&next) {
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendInferenceRequest {
+                        request: request.clone(),
+                    });
+            }
+        }
+
+        let hop = {
+            let stage = self.pipeline_stage.as_mut().unwrap();
+            match stage.worker.prefill_from_tokens(
+                request.deployment_id,
+                request.request_id,
+                &request.input_token_ids,
+            ) {
+                Ok(hop) => hop,
+                Err(error) => {
+                    self.reject_pipeline_request(from_peer, &request, error.to_string());
+                    return;
+                }
+            }
+        };
+
+        self.pipeline_requests
+            .entry(request.request_id)
+            .and_modify(|state| {
+                state.owner_node_id = from_peer;
+                state.next_stage_node = next_stage_node;
+                state.sampling = request.sampling;
+                state.prompt_len = request.input_token_ids.len() as u32;
+                state.stop_token_ids = request.stop_token_ids.clone();
+            })
+            .or_insert(PipelineRequestState {
+                request_id: request.request_id,
+                deployment_id: request.deployment_id,
+                owner_node_id: from_peer,
+                first_stage_node,
+                next_stage_node,
+                sampler: None,
+                sampling: request.sampling,
+                prompt_len: request.input_token_ids.len() as u32,
+                stop_token_ids: request.stop_token_ids.clone(),
+            });
+        self.local_active_requests = self.local_active_requests.max(1);
+
+        if let Err(error) = self.dispatch_stage_hop(request.request_id, hop) {
+            self.fail_pipeline_request(request.request_id, error);
+        }
+    }
+
+    fn reject_pipeline_request(
+        &mut self,
+        from_peer: NodeId,
+        request: &InferenceRequestSpec,
+        reason: String,
+    ) {
+        if let Some(session) = self.sessions.get(&from_peer) {
+            let event = TokenResultEvent {
+                deployment_id: request.deployment_id,
+                request_id: request.request_id,
+                token_id: 0,
+                token_index: 0,
+                is_last: true,
+                stop_reason: Some(StopReason::Error),
+                sequence_length: 0,
+            };
+            let _ = session
+                .commands
+                .try_send(SessionCommand::SendTokenResult { event });
+        } else if self
+            .pending_remote_generation
+            .as_ref()
+            .is_some_and(|pending| pending.request_id == request.request_id)
+        {
+            self.state.snapshot.inference.busy = false;
+            self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+            self.state.snapshot.inference.error = Some(reason.clone());
+            self.pending_remote_generation = None;
+        }
+        warn!(%from_peer, %reason, "rejected pipeline inference request");
+    }
+
+    fn on_pipeline_next_token_feedback(&mut self, from_peer: NodeId, feedback: NextTokenFeedback) {
+        let _ = from_peer;
+        if feedback.is_last {
+            if let Some(stage) = self.pipeline_stage.as_mut() {
+                stage.worker.finish_request(feedback.request_id);
+            }
+            if self.pipeline_requests.remove(&feedback.request_id).is_some() {
+                self.local_active_requests = self.local_active_requests.saturating_sub(1);
+            }
+            return;
+        }
+
+        let Some(stage) = self.pipeline_stage.as_mut() else {
+            return;
+        };
+        if stage.assignment.role != StageRole::First {
+            return;
+        }
+        if stage.placement.deployment_id != feedback.deployment_id {
+            return;
+        }
+        if !self.pipeline_requests.contains_key(&feedback.request_id) {
+            return;
+        }
+
+        let hop = match stage.worker.decode_from_token(
+            feedback.deployment_id,
+            feedback.request_id,
+            feedback.token_id,
+        ) {
+            Ok(hop) => hop,
+            Err(error) => {
+                self.fail_pipeline_request(feedback.request_id, error.to_string());
+                return;
+            }
+        };
+        if let Err(error) = self.dispatch_stage_hop(feedback.request_id, hop) {
+            self.fail_pipeline_request(feedback.request_id, error);
+        }
+    }
+
+    fn on_pipeline_activation(&mut self, from_peer: NodeId, frame: ActivationFrame) {
+        let Some(stage) = self.pipeline_stage.as_ref() else {
+            warn!("dropped activation; no local pipeline stage");
+            return;
+        };
+        if frame.header.deployment_id != stage.placement.deployment_id {
+            warn!("dropped activation; deployment mismatch");
+            return;
+        }
+        if frame.header.destination_stage != stage.assignment.stage_index {
+            warn!(
+                dest = frame.header.destination_stage,
+                local = stage.assignment.stage_index,
+                "dropped activation; destination mismatch"
+            );
+            return;
+        }
+
+        let request_id = frame.header.request_id;
+        let deployment_id = frame.header.deployment_id;
+        let transfer_kind = frame.header.transfer_kind;
+
+        if transfer_kind == mesh_core::TransferKind::Prefill
+            && !self.pipeline_requests.contains_key(&request_id)
+        {
+            let next_stage_node = stage
+                .placement
+                .stages
+                .get(stage.assignment.stage_index as usize + 1)
+                .map(|item| item.node_id);
+            let first_stage_node = stage
+                .placement
+                .stages
+                .first()
+                .map(|item| item.node_id)
+                .unwrap_or(stage.assignment.node_id);
+            self.pipeline_requests.insert(
+                request_id,
+                PipelineRequestState {
+                    request_id,
+                    deployment_id,
+                    owner_node_id: from_peer,
+                    first_stage_node,
+                    next_stage_node,
+                    sampler: None,
+                    sampling: SamplingParams {
+                        temperature: 0.0,
+                        top_k: 0,
+                        top_p: 1.0,
+                        repetition_penalty: 1.0,
+                        seed: 0,
+                        max_new_tokens: 1,
+                    },
+                    prompt_len: frame.header.used_dimensions().get(1).copied().unwrap_or(1) as u32,
+                    stop_token_ids: Vec::new(),
+                },
+            );
+            self.local_active_requests = self.local_active_requests.saturating_add(1);
+        }
+
+        let incoming = StageActivation {
+            header: frame.header,
+            payload: frame.payload,
+        };
+        let hop = {
+            let stage = self.pipeline_stage.as_mut().unwrap();
+            match stage
+                .worker
+                .forward_activation(deployment_id, request_id, incoming)
+            {
+                Ok(hop) => hop,
+                Err(error) => {
+                    self.fail_pipeline_request(request_id, error.to_string());
+                    return;
+                }
+            }
+        };
+
+        if let Err(error) = self.dispatch_stage_hop(request_id, hop) {
+            self.fail_pipeline_request(request_id, error);
+        }
+    }
+
+    fn dispatch_stage_hop(
+        &mut self,
+        request_id: RequestId,
+        hop: StageHop,
+    ) -> Result<(), String> {
+        match hop {
+            StageHop::Activation(activation) => {
+                let next = self
+                    .pipeline_requests
+                    .get(&request_id)
+                    .and_then(|state| state.next_stage_node)
+                    .ok_or_else(|| "missing next stage peer".to_owned())?;
+                let session = self
+                    .sessions
+                    .get(&next)
+                    .ok_or_else(|| "next stage peer not connected".to_owned())?;
+                session
+                    .commands
+                    .try_send(SessionCommand::SendActivation {
+                        header: activation.header,
+                        payload: activation.payload,
+                    })
+                    .map_err(|_| "failed to queue activation send".to_owned())?;
+                Ok(())
+            }
+            StageHop::Logits(logits) => self.handle_final_logits(request_id, logits),
+        }
+    }
+
+    fn handle_final_logits(
+        &mut self,
+        request_id: RequestId,
+        logits: Vec<f32>,
+    ) -> Result<(), String> {
+        let stage = self
+            .pipeline_stage
+            .as_ref()
+            .ok_or_else(|| "missing pipeline stage".to_owned())?;
+        if !stage.assignment.role.emits_logits() {
+            return Err("non-final stage produced logits".to_owned());
+        }
+        let vocab_size = stage.worker.vocab_size();
+        let context_limit = stage.worker.context_limit();
+        let local_id = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id);
+
+        let (event, feedback, owner, first_stage, is_last) = {
+            let state = self
+                .pipeline_requests
+                .get_mut(&request_id)
+                .ok_or_else(|| "missing pipeline request state".to_owned())?;
+            if state.sampler.is_none() {
+                let prompt_stub = vec![0u32; state.prompt_len.max(1) as usize];
+                state.sampler = Some(Sampler::new(
+                    state.sampling,
+                    vocab_size,
+                    151_645,
+                    state.stop_token_ids.clone(),
+                    context_limit,
+                    &prompt_stub,
+                )?);
+            }
+            let sampler = state
+                .sampler
+                .as_mut()
+                .ok_or_else(|| "final stage missing sampler".to_owned())?;
+            let outcome = sampler.sample(&logits)?;
+            let event = TokenResultEvent {
+                deployment_id: state.deployment_id,
+                request_id,
+                token_id: outcome.token_id,
+                token_index: outcome.token_index,
+                is_last: outcome.is_last,
+                stop_reason: outcome.stop_reason,
+                sequence_length: outcome.sequence_length,
+            };
+            let feedback = NextTokenFeedback {
+                deployment_id: state.deployment_id,
+                request_id,
+                token_id: outcome.token_id,
+                token_index: outcome.token_index,
+                is_last: outcome.is_last,
+            };
+            (
+                event,
+                feedback,
+                state.owner_node_id,
+                state.first_stage_node,
+                outcome.is_last,
+            )
+        };
+
+        if let Some(pending) = self.pending_remote_generation.as_ref() {
+            if pending.pipeline && pending.request_id == request_id {
+                self.on_remote_token(event.clone());
+            }
+        }
+        if Some(owner) != local_id {
+            if let Some(session) = self.sessions.get(&owner) {
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendTokenResult {
+                        event: event.clone(),
+                    });
+            }
+        } else if !self
+            .pending_remote_generation
+            .as_ref()
+            .is_some_and(|pending| pending.pipeline && pending.request_id == request_id)
+        {
+            // Local coordinator without pending marker still surfaces tokens.
+            self.on_remote_token(event.clone());
+        }
+
+        if Some(first_stage) != local_id {
+            if let Some(session) = self.sessions.get(&first_stage) {
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendNextTokenFeedback {
+                        feedback: feedback.clone(),
+                    });
+            }
+        } else if !is_last {
+            self.on_pipeline_next_token_feedback(first_stage, feedback);
+        }
+
+        if is_last {
+            if let Some(stage) = self.pipeline_stage.as_mut() {
+                stage.worker.finish_request(request_id);
+            }
+            if self.pipeline_requests.remove(&request_id).is_some() {
+                self.local_active_requests = self.local_active_requests.saturating_sub(1);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn fail_pipeline_request(&mut self, request_id: RequestId, reason: String) {
+        warn!(%request_id, %reason, "pipeline request failed");
+        let state = self.pipeline_requests.remove(&request_id);
+        if let Some(stage) = self.pipeline_stage.as_mut() {
+            stage.worker.cancel(request_id);
+        }
+        self.local_active_requests = self.local_active_requests.saturating_sub(1);
+        if let Some(state) = state {
+            let event = TokenResultEvent {
+                deployment_id: state.deployment_id,
+                request_id,
+                token_id: 0,
+                token_index: 0,
+                is_last: true,
+                stop_reason: Some(StopReason::Error),
+                sequence_length: 0,
+            };
+            if let Some(pending) = self.pending_remote_generation.as_ref() {
+                if pending.pipeline && pending.request_id == request_id {
+                    self.on_remote_token(event.clone());
+                }
+            }
+            if let Some(session) = self.sessions.get(&state.owner_node_id) {
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendTokenResult { event });
+            }
+            if state.first_stage_node
+                != self
+                    .state
+                    .identity
+                    .as_ref()
+                    .map(|id| id.node_id)
+                    .unwrap_or(state.first_stage_node)
+            {
+                if let Some(session) = self.sessions.get(&state.first_stage_node) {
+                    let _ = session
+                        .commands
+                        .try_send(SessionCommand::SendNextTokenFeedback {
+                            feedback: NextTokenFeedback {
+                                deployment_id: state.deployment_id,
+                                request_id,
+                                token_id: 0,
+                                token_index: 0,
+                                is_last: true,
+                            },
+                        });
+                }
+            }
+        }
+    }
+
+    fn cancel_pipeline_request(&mut self, deployment_id: DeploymentId, request_id: RequestId) {
+        let Some(stage) = self.pipeline_stage.as_mut() else {
+            return;
+        };
+        if stage.placement.deployment_id != deployment_id
+            && self
+                .pipeline_requests
+                .get(&request_id)
+                .map(|state| state.deployment_id)
+                != Some(deployment_id)
+        {
+            return;
+        }
+        stage.worker.cancel(request_id);
+        if self.pipeline_requests.remove(&request_id).is_some() {
+            self.local_active_requests = self.local_active_requests.saturating_sub(1);
+        }
+    }
+
+    fn cancel_pipeline_for_peer(&mut self, peer_node_id: NodeId) {
+        let ids: Vec<_> = self
+            .pipeline_requests
+            .iter()
+            .filter_map(|(id, state)| {
+                if state.owner_node_id == peer_node_id
+                    || state.first_stage_node == peer_node_id
+                    || state.next_stage_node == Some(peer_node_id)
+                {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in ids {
+            if let Some(stage) = self.pipeline_stage.as_mut() {
+                stage.worker.cancel(id);
+            }
+            self.pipeline_requests.remove(&id);
+            self.local_active_requests = self.local_active_requests.saturating_sub(1);
+        }
+    }
 
     fn local_replica_view(&self) -> Option<ReplicaEndpointView> {
-        let engine = self.inference_engine.as_ref()?;
         let identity = self.state.identity.as_ref()?;
-        let max = engine.max_concurrent_requests();
+        if let Some(engine) = self.inference_engine.as_ref() {
+            let max = engine.max_concurrent_requests();
+            let health = if self.local_active_requests >= max {
+                ReplicaHealth::Busy
+            } else {
+                ReplicaHealth::Ready
+            };
+            return Some(ReplicaEndpointView {
+                node_id: identity.node_id.to_string(),
+                display_name: identity.display_name.clone(),
+                deployment_id: engine.deployment_id.to_string(),
+                model_line: engine.model_line.clone(),
+                backend: engine.backend.as_str().to_owned(),
+                ready: health == ReplicaHealth::Ready,
+                healthy: true,
+                active_requests: self.local_active_requests,
+                max_concurrent_requests: max,
+                health,
+                local: true,
+            });
+        }
+        let stage = self.pipeline_stage.as_ref()?;
+        let max = 1u32;
         let health = if self.local_active_requests >= max {
             ReplicaHealth::Busy
         } else {
@@ -2962,9 +3880,9 @@ impl NodeRuntime {
         Some(ReplicaEndpointView {
             node_id: identity.node_id.to_string(),
             display_name: identity.display_name.clone(),
-            deployment_id: engine.deployment_id.to_string(),
-            model_line: engine.model_line.clone(),
-            backend: engine.backend.as_str().to_owned(),
+            deployment_id: stage.placement.deployment_id.to_string(),
+            model_line: stage.model_line.clone(),
+            backend: stage.worker.backend().as_str().to_owned(),
             ready: health == ReplicaHealth::Ready,
             healthy: true,
             active_requests: self.local_active_requests,
@@ -4039,6 +4957,278 @@ mod tests {
         coord_handle.request_shutdown().ok();
         let _ = worker_task.await;
         let _ = coord_task.await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn p09_dual_node_pipeline_generate_smoke() {
+        if std::env::var_os("MESH_P09_MULTI_SMOKE").is_none() {
+            eprintln!(
+                "skipping P09 dual-node pipeline smoke; set MESH_P09_MULTI_SMOKE=1 to run"
+            );
+            return;
+        }
+
+        let cache_src = std::env::var_os("MESH_P07_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("mesh-p07-smoke")
+            });
+        assert!(
+            cache_src.join("model-cache").is_dir(),
+            "missing prepared cache at {}",
+            cache_src.display()
+        );
+
+        let root = std::env::temp_dir().join(format!("mesh-p09-{}", now_unix_ms()));
+        let first_dir = root.join("first");
+        let final_dir = root.join("final");
+        std::fs::create_dir_all(&first_dir).expect("first dir");
+        std::fs::create_dir_all(&final_dir).expect("final dir");
+        for dir in [&first_dir, &final_dir] {
+            let _ = std::os::unix::fs::symlink(
+                cache_src.join("model-cache"),
+                dir.join("model-cache"),
+            );
+            let _ = std::os::unix::fs::symlink(cache_src.join("cache"), dir.join("cache"));
+        }
+
+        let max_new_tokens = std::env::var("MESH_P09_MAX_NEW_TOKENS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(4)
+            .max(1);
+
+        eprintln!("P09 multi: boot runtimes");
+        let first = NodeRuntime::create("P09 First", StorePaths::isolated(&first_dir))
+            .expect("first runtime");
+        let final_node =
+            NodeRuntime::create("P09 Final", StorePaths::isolated(&final_dir)).expect("final runtime");
+        let first_handle = first.handle();
+        let final_handle = final_node.handle();
+        let first_task = tokio::spawn(first.run());
+        let final_task = tokio::spawn(final_node.run());
+
+        wait_for(&first_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+        })
+        .await;
+        first_handle
+            .send(UiCommand::CreateMesh {
+                display_name: "P09 First".to_owned(),
+            })
+            .await
+            .expect("create mesh");
+        wait_for(&first_handle, |snapshot| snapshot.phase == RuntimePhase::Ready).await;
+        first_handle
+            .send(UiCommand::CreateInvitation)
+            .await
+            .expect("invite");
+        let invitation = wait_for(&first_handle, |snapshot| {
+            snapshot.enrollment.invitation_text.is_some()
+        })
+        .await
+        .enrollment
+        .invitation_text
+        .expect("invitation");
+
+        wait_for(&final_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+        })
+        .await;
+        final_handle
+            .send(UiCommand::SubmitInvitation { text: invitation })
+            .await
+            .expect("join");
+        wait_for(&final_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::Ready && !snapshot.peers.is_empty()
+        })
+        .await;
+        wait_for(&first_handle, |snapshot| !snapshot.peers.is_empty()).await;
+        eprintln!("P09 multi: peers connected");
+
+        for handle in [&first_handle, &final_handle] {
+            handle
+                .send(UiCommand::SelectModel {
+                    reference: ModelReference::qwen3_4b(),
+                })
+                .await
+                .expect("select");
+            handle
+                .send(UiCommand::RefreshProviderAccess)
+                .await
+                .expect("access");
+            wait_for_timeout(handle, Duration::from_secs(120), |snapshot| {
+                !snapshot.models.busy
+                    && snapshot.models.provider_access.status
+                        != mesh_core::ProviderAccessStatus::Unchecked
+            })
+            .await;
+            handle
+                .send(UiCommand::ProbeSelectedModel)
+                .await
+                .expect("probe");
+            wait_for_timeout(handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.models.busy && snapshot.models.resolved_identity.is_some()
+            })
+            .await;
+            handle
+                .send(UiCommand::PrepareSelectedModel)
+                .await
+                .expect("prepare");
+            wait_for_timeout(handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.models.busy && snapshot.models.last_prepare_summary.is_some()
+            })
+            .await;
+        }
+        eprintln!("P09 multi: prepare done");
+
+        let first_ready = first_handle.snapshot();
+        let final_ready = final_handle.snapshot();
+        let first_node_id = first_ready
+            .local
+            .node_id
+            .expect("first node id")
+            .to_string();
+        let final_node_id = final_ready
+            .local
+            .node_id
+            .expect("final node id")
+            .to_string();
+        let deployment_id = DeploymentId::new().to_string();
+        let node_ids = vec![first_node_id.clone(), final_node_id.clone()];
+        let placement = PlacementPlan::split_even(
+            DeploymentId::parse_hex(&deployment_id).expect("deployment"),
+            "Qwen/Qwen3-4B",
+            36,
+            &[
+                NodeId::parse_hex(&first_node_id).expect("first id"),
+                NodeId::parse_hex(&final_node_id).expect("final id"),
+            ],
+        )
+        .expect("placement");
+        let first_assignment = placement.stages[0].clone();
+        let final_assignment = placement.stages[1].clone();
+        eprintln!(
+            "P09 multi: placement first={}..{} final={}..{}",
+            first_assignment.layer_range.start,
+            first_assignment.layer_range.end,
+            final_assignment.layer_range.start,
+            final_assignment.layer_range.end
+        );
+
+        eprintln!("P09 multi: loading first stage");
+        first_handle
+            .send(UiCommand::LoadPipelineStage {
+                deployment_id: deployment_id.clone(),
+                model_line: "Qwen/Qwen3-4B".to_owned(),
+                num_layers: 36,
+                stage_index: first_assignment.stage_index,
+                role: first_assignment.role,
+                layer_start: first_assignment.layer_range.start,
+                layer_end: first_assignment.layer_range.end,
+                node_ids: node_ids.clone(),
+            })
+            .await
+            .expect("load first stage");
+        let first_loaded =
+            wait_for_timeout(&first_handle, Duration::from_secs(20 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            })
+            .await;
+        assert!(
+            first_loaded.inference.error.is_none(),
+            "first stage load failed: {:?}",
+            first_loaded.inference.error
+        );
+        eprintln!(
+            "P09 multi: first stage ready backend={:?}",
+            first_loaded.inference.backend
+        );
+
+        eprintln!("P09 multi: loading final stage");
+        final_handle
+            .send(UiCommand::LoadPipelineStage {
+                deployment_id: deployment_id.clone(),
+                model_line: "Qwen/Qwen3-4B".to_owned(),
+                num_layers: 36,
+                stage_index: final_assignment.stage_index,
+                role: final_assignment.role,
+                layer_start: final_assignment.layer_range.start,
+                layer_end: final_assignment.layer_range.end,
+                node_ids,
+            })
+            .await
+            .expect("load final stage");
+        let final_loaded =
+            wait_for_timeout(&final_handle, Duration::from_secs(20 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            })
+            .await;
+        assert!(
+            final_loaded.inference.error.is_none(),
+            "final stage load failed: {:?}",
+            final_loaded.inference.error
+        );
+        assert_eq!(final_loaded.inference.phase, Some(InferencePhase::Ready));
+        eprintln!(
+            "P09 multi: final stage ready backend={:?}",
+            final_loaded.inference.backend
+        );
+
+        eprintln!("P09 multi: generate max_new_tokens={max_new_tokens}");
+        first_handle
+            .send(UiCommand::Generate {
+                prompt: "Say hi".to_owned(),
+                max_new_tokens,
+                temperature: 0.0,
+                seed: 7,
+            })
+            .await
+            .expect("generate");
+        let generated =
+            wait_for_timeout(&first_handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.generated_tokens > 0
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            })
+            .await;
+        assert!(
+            generated.inference.error.is_none(),
+            "pipeline generation failed: {:?}",
+            generated.inference.error
+        );
+        assert!(
+            generated.inference.generated_tokens > 0,
+            "expected pipeline tokens: {:?}",
+            generated.inference
+        );
+        assert!(
+            !generated.inference.output_text.trim().is_empty(),
+            "empty pipeline output"
+        );
+        eprintln!(
+            "P09 dual-node pipeline backend={:?} tokens={} stop={:?} output={:?}",
+            generated.inference.backend,
+            generated.inference.generated_tokens,
+            generated.inference.stop_reason,
+            generated.inference.output_text
+        );
+
+        first_handle.request_shutdown().ok();
+        final_handle.request_shutdown().ok();
+        let _ = first_task.await;
+        let _ = final_task.await;
         let _ = std::fs::remove_dir_all(&root);
     }
 
