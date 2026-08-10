@@ -93,6 +93,14 @@ pub enum UiCommand {
     HideFirewallHelp,
     RunLocalReservationProbe,
     ReleaseAllLocalReservations,
+    SelectModel { reference: crate::ModelReference },
+    RefreshProviderAccess,
+    SaveHuggingFaceToken { token: String },
+    DeleteHuggingFaceToken,
+    ProbeSelectedModel,
+    PrepareSelectedModel,
+    CancelModelWork,
+    ClearModelCache,
     Shutdown,
 }
 

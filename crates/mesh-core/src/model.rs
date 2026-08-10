@@ -244,12 +244,26 @@ pub struct ModelCacheView {
     pub partial_count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelDownloadProgress {
+    pub artifact_path: String,
+    pub bytes_done: u64,
+    pub bytes_total: Option<u64>,
+    pub phase: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelStoreView {
     pub provider_access: ProviderAccessReport,
     pub cache: ModelCacheView,
     pub selected_model: Option<String>,
+    pub selected_reference: Option<ModelReference>,
+    pub resolved_identity: Option<ModelIdentity>,
     pub status_line: String,
+    pub error: Option<String>,
+    pub busy: bool,
+    pub progress: Option<ModelDownloadProgress>,
+    pub last_prepare_summary: Option<String>,
 }
 
 impl Default for ModelStoreView {
@@ -258,7 +272,13 @@ impl Default for ModelStoreView {
             provider_access: ProviderAccessReport::unchecked_huggingface(),
             cache: ModelCacheView::default(),
             selected_model: None,
+            selected_reference: None,
+            resolved_identity: None,
             status_line: "Model provider idle".to_owned(),
+            error: None,
+            busy: false,
+            progress: None,
+            last_prepare_summary: None,
         }
     }
 }

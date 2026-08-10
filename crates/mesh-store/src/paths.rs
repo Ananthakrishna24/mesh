@@ -9,6 +9,7 @@ pub struct StorePaths {
     pub data_dir: PathBuf,
     pub db_path: PathBuf,
     pub cache_dir: PathBuf,
+    pub model_cache_dir: PathBuf,
 }
 
 pub fn default_store_paths() -> StoreResult<StorePaths> {
@@ -21,6 +22,7 @@ pub fn default_store_paths() -> StoreResult<StorePaths> {
 
     Ok(StorePaths {
         db_path: data_dir.join("mesh.db"),
+        model_cache_dir: data_dir.join("model-cache"),
         data_dir,
         cache_dir,
     })
@@ -32,6 +34,7 @@ impl StorePaths {
         Self {
             db_path: root.join("mesh.db"),
             cache_dir: root.join("cache"),
+            model_cache_dir: root.join("model-cache"),
             data_dir: root,
         }
     }

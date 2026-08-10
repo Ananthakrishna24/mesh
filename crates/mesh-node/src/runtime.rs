@@ -11,16 +11,21 @@ use mesh_core::invite::{
 };
 use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
-    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_HOLD_LEASE_MS,
-    DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress, GpuResourceAmount,
-    HardwareSummaryView, LinkMeasurement, LocalIdentity, LocalNodeSummary, ManualForwardingGuide,
-    MeshId, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, RecoveryAction, ReservationCommit,
-    ReservationId, ReservationRelease, ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase,
-    UiCommand, UiSnapshot, filter_advertised_candidates, merge_peer_records, now_unix_ms,
-    sort_candidates_for_dial,
+    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_CACHE_MAX_BYTES,
+    DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress,
+    GpuResourceAmount, HardwareSummaryView, LinkMeasurement, LocalIdentity, LocalNodeSummary,
+    ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress, ModelReference, NodeId,
+    PeerRecord, PeerRecordOrigin, PeerSummary, ProviderAccessReport, ProviderAuthMode,
+    RecoveryAction, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest,
+    ResourceAmount, ResourceQuery, RuntimePhase, UiCommand, UiSnapshot,
+    filter_advertised_candidates, merge_peer_records, now_unix_ms, sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
 use mesh_inference::{LocalResourceManager, ReserveOutcome};
+use mesh_model::{
+    DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
+    build_complete_plan, cleanup_incomplete, prepare_plan,
+};
 use mesh_net::{
     EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint, RouterMappingHandle,
     SessionCommand, SessionEvent, advertised_candidates, attempt_router_mapping,
@@ -29,10 +34,37 @@ use mesh_net::{
     start_at_after, wait_until_unix_ms, with_manual_candidate, with_peer_observed,
     with_router_mapping,
 };
-use mesh_store::{Store, StorePaths};
+use mesh_store::{
+    CredentialLookup, Store, StorePaths, delete_huggingface_token, huggingface_token_lookup,
+    load_huggingface_token, save_huggingface_token,
+};
 use rand::RngCore;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tracing::{info, warn};
+
+fn initial_provider_access_report() -> ProviderAccessReport {
+    match huggingface_token_lookup() {
+        CredentialLookup::Found => ProviderAccessReport {
+            provider: mesh_core::PROVIDER_HUGGINGFACE.to_owned(),
+            checked_at_unix_ms: 0,
+            auth_mode: ProviderAuthMode::Saved,
+            public_read: false,
+            gated_read: false,
+            status: mesh_core::ProviderAccessStatus::Unchecked,
+            detail: "Saved Hugging Face token present; access not checked yet".to_owned(),
+        },
+        CredentialLookup::Missing => ProviderAccessReport::unchecked_huggingface(),
+        CredentialLookup::StoreUnavailable => ProviderAccessReport {
+            provider: mesh_core::PROVIDER_HUGGINGFACE.to_owned(),
+            checked_at_unix_ms: 0,
+            auth_mode: ProviderAuthMode::None,
+            public_read: false,
+            gated_read: false,
+            status: mesh_core::ProviderAccessStatus::StoreUnavailable,
+            detail: "Credential store unavailable".to_owned(),
+        },
+    }
+}
 
 const COMMAND_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 64;
@@ -285,6 +317,10 @@ enum RuntimeEvent {
         peer_node_id: NodeId,
         event: SessionEvent,
     },
+    ModelAccess(Result<ProviderAccessReport, String>),
+    ModelResolved(Result<ResolvedModel, String>),
+    ModelPrepared(Result<PrepareResult, String>),
+    ModelProgress(ModelDownloadProgress),
 }
 
 struct LiveSession {
@@ -312,6 +348,9 @@ pub struct NodeRuntime {
     >,
     peer_update_dirty: bool,
     last_peer_update: Option<tokio::time::Instant>,
+    model_session_token: Option<String>,
+    model_cancel: Option<watch::Sender<bool>>,
+    resolved_model: Option<ResolvedModel>,
 }
 
 impl NodeRuntime {
@@ -330,6 +369,14 @@ impl NodeRuntime {
             restored,
         );
         state.snapshot.resources = resources.view();
+        let _ = cleanup_incomplete(&paths.model_cache_dir, now_unix_ms(), false);
+        state.snapshot.models.cache = store
+            .model_cache_view(
+                paths.model_cache_dir.display().to_string(),
+                DEFAULT_CACHE_MAX_BYTES,
+            )
+            .unwrap_or_default();
+        state.snapshot.models.provider_access = initial_provider_access_report();
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (snapshot_tx, snapshot_rx) = watch::channel(state.snapshot.clone());
         let (shutdown_tx, shutdown_rx) = broadcast::channel(EVENT_CAPACITY);
@@ -357,6 +404,9 @@ impl NodeRuntime {
             pending_remote_reserves: HashMap::new(),
             peer_update_dirty: false,
             last_peer_update: None,
+            model_session_token: None,
+            model_cancel: None,
+            resolved_model: None,
         })
     }
 
@@ -377,9 +427,11 @@ impl NodeRuntime {
             let name = self.state.snapshot.local.display_name.clone();
             let hardware = self.state.snapshot.hardware.clone();
             let resources = self.state.snapshot.resources.clone();
+            let models = self.state.snapshot.models.clone();
             self.state.snapshot = UiSnapshot::first_run(name);
             self.state.snapshot.hardware = hardware;
             self.state.snapshot.resources = resources;
+            self.state.snapshot.models = models;
             self.publish();
         }
 
@@ -506,9 +558,11 @@ impl NodeRuntime {
                     let name = self.state.snapshot.local.display_name.clone();
                     let hardware = self.state.snapshot.hardware.clone();
                     let resources = self.state.snapshot.resources.clone();
+                    let models = self.state.snapshot.models.clone();
                     self.state.snapshot = UiSnapshot::first_run(name);
                     self.state.snapshot.hardware = hardware;
                     self.state.snapshot.resources = resources;
+                    self.state.snapshot.models = models;
                 }
                 self.publish();
                 false
@@ -639,6 +693,46 @@ impl NodeRuntime {
                 self.publish();
                 false
             }
+            UiCommand::SelectModel { reference } => {
+                self.select_model(reference);
+                self.publish();
+                false
+            }
+            UiCommand::RefreshProviderAccess => {
+                self.spawn_provider_access_probe(None);
+                self.publish();
+                false
+            }
+            UiCommand::SaveHuggingFaceToken { token } => {
+                self.save_huggingface_token_command(token);
+                self.publish();
+                false
+            }
+            UiCommand::DeleteHuggingFaceToken => {
+                self.delete_huggingface_token_command();
+                self.publish();
+                false
+            }
+            UiCommand::ProbeSelectedModel => {
+                self.spawn_model_resolve();
+                self.publish();
+                false
+            }
+            UiCommand::PrepareSelectedModel => {
+                self.spawn_model_prepare();
+                self.publish();
+                false
+            }
+            UiCommand::CancelModelWork => {
+                self.cancel_model_work();
+                self.publish();
+                false
+            }
+            UiCommand::ClearModelCache => {
+                self.clear_model_cache();
+                self.publish();
+                false
+            }
             UiCommand::Shutdown => true,
         }
     }
@@ -698,6 +792,22 @@ impl NodeRuntime {
                 event,
             } => {
                 self.handle_session_event(peer_node_id, event).await;
+            }
+            RuntimeEvent::ModelAccess(result) => {
+                self.on_model_access(result);
+                self.publish();
+            }
+            RuntimeEvent::ModelResolved(result) => {
+                self.on_model_resolved(result);
+                self.publish();
+            }
+            RuntimeEvent::ModelPrepared(result) => {
+                self.on_model_prepared(result);
+                self.publish();
+            }
+            RuntimeEvent::ModelProgress(progress) => {
+                self.state.snapshot.models.progress = Some(progress);
+                self.publish();
             }
         }
     }
@@ -1759,6 +1869,378 @@ impl NodeRuntime {
         }
     }
 
+    fn select_model(&mut self, reference: ModelReference) {
+        self.resolved_model = None;
+        self.state.snapshot.models.selected_reference = Some(reference.clone());
+        self.state.snapshot.models.selected_model = Some(reference.repository.clone());
+        self.state.snapshot.models.resolved_identity = None;
+        self.state.snapshot.models.error = None;
+        self.state.snapshot.models.progress = None;
+        self.state.snapshot.models.last_prepare_summary = None;
+        self.state.snapshot.models.status_line =
+            format!("Selected {}@{}", reference.repository, reference.revision_hint);
+        self.state
+            .set_status(format!("Selected model {}.", reference.repository));
+    }
+
+    fn save_huggingface_token_command(&mut self, token: String) {
+        let trimmed = token.trim().to_owned();
+        if trimmed.is_empty() {
+            self.state.snapshot.models.error = Some("Token cannot be empty.".to_owned());
+            self.state.snapshot.models.status_line = "Hugging Face token rejected".to_owned();
+            return;
+        }
+        match save_huggingface_token(&trimmed) {
+            Ok(()) => {
+                self.model_session_token = None;
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = "Saved Hugging Face token".to_owned();
+                self.state.set_status("Saved Hugging Face token.");
+                self.spawn_provider_access_probe(Some(trimmed));
+            }
+            Err(error) => {
+                self.model_session_token = Some(trimmed.clone());
+                self.state.snapshot.models.error = Some(format!(
+                    "Credential store unavailable ({error}). Using session-only token."
+                ));
+                self.state.snapshot.models.status_line =
+                    "Using session-only Hugging Face token".to_owned();
+                self.state
+                    .set_status("Credential store unavailable; token kept for this session only.");
+                self.spawn_provider_access_probe(Some(trimmed));
+            }
+        }
+    }
+
+    fn delete_huggingface_token_command(&mut self) {
+        self.model_session_token = None;
+        match delete_huggingface_token() {
+            Ok(_) => {
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = "Deleted Hugging Face token".to_owned();
+                self.state.set_status("Deleted Hugging Face token.");
+            }
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error.to_string());
+                self.state.snapshot.models.status_line = "Failed to delete token".to_owned();
+            }
+        }
+        self.spawn_provider_access_probe(None);
+    }
+
+    fn cancel_model_work(&mut self) {
+        if let Some(cancel) = self.model_cancel.take() {
+            let _ = cancel.send(true);
+        }
+        self.state.snapshot.models.busy = false;
+        self.state.snapshot.models.progress = None;
+        self.state.snapshot.models.status_line = "Model work cancelled".to_owned();
+        self.state.set_status("Cancelled model work.");
+    }
+
+    fn clear_model_cache(&mut self) {
+        let entries = self.store.list_model_cache_entries().unwrap_or_default();
+        let mut removed = 0u32;
+        for entry in entries {
+            if entry.reference_count > 0 || entry.pinned {
+                continue;
+            }
+            let path = self.paths.model_cache_dir.join(&entry.relative_path);
+            let _ = std::fs::remove_file(path);
+            if self.store.delete_model_cache_entry(&entry.entry_id).is_ok() {
+                removed = removed.saturating_add(1);
+            }
+        }
+        let _ = cleanup_incomplete(&self.paths.model_cache_dir, now_unix_ms(), true);
+        self.refresh_model_cache_view();
+        self.state.snapshot.models.status_line = format!("Cleared {removed} cache entries");
+        self.state
+            .set_status(format!("Cleared {removed} unreferenced model cache entries."));
+    }
+
+    fn refresh_model_cache_view(&mut self) {
+        self.state.snapshot.models.cache = self
+            .store
+            .model_cache_view(
+                self.paths.model_cache_dir.display().to_string(),
+                DEFAULT_CACHE_MAX_BYTES,
+            )
+            .unwrap_or_else(|_| ModelCacheView {
+                root: self.paths.model_cache_dir.display().to_string(),
+                ..ModelCacheView::default()
+            });
+    }
+
+    fn current_provider_token(&self) -> (Option<String>, ProviderAuthMode) {
+        if let Some(token) = &self.model_session_token {
+            return (Some(token.clone()), ProviderAuthMode::Session);
+        }
+        match load_huggingface_token() {
+            Ok(Some(token)) => (Some(token), ProviderAuthMode::Saved),
+            Ok(None) => (None, ProviderAuthMode::None),
+            Err(_) => (None, ProviderAuthMode::None),
+        }
+    }
+
+    fn build_provider(&self) -> Result<HuggingFaceProvider, String> {
+        let (token, auth_mode) = self.current_provider_token();
+        let hf_cache = self.paths.cache_dir.join("hf-hub");
+        HuggingFaceProvider::new(token, auth_mode, hf_cache).map_err(|error| error.to_string())
+    }
+
+    fn spawn_provider_access_probe(&mut self, override_token: Option<String>) {
+        let reference = self
+            .state
+            .snapshot
+            .models
+            .selected_reference
+            .clone()
+            .unwrap_or_else(ModelReference::qwen3_4b);
+        let event_tx = self.event_tx.clone();
+        let hf_cache = self.paths.cache_dir.join("hf-hub");
+        let (token, auth_mode) = if let Some(token) = override_token {
+            let mode = if self.model_session_token.as_ref() == Some(&token) {
+                ProviderAuthMode::Session
+            } else {
+                ProviderAuthMode::Saved
+            };
+            (Some(token), mode)
+        } else {
+            self.current_provider_token()
+        };
+        self.state.snapshot.models.busy = true;
+        self.state.snapshot.models.status_line = "Checking Hugging Face access…".to_owned();
+        tokio::spawn(async move {
+            let result = async {
+                let provider = HuggingFaceProvider::new(token, auth_mode, hf_cache)
+                    .map_err(|error| error.to_string())?;
+                provider
+                    .probe_access(&reference)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            .await;
+            let _ = event_tx.send(RuntimeEvent::ModelAccess(result)).await;
+        });
+    }
+
+    fn spawn_model_resolve(&mut self) {
+        let Some(reference) = self.state.snapshot.models.selected_reference.clone() else {
+            self.state.snapshot.models.error = Some("Select a model first.".to_owned());
+            self.state.snapshot.models.status_line = "No model selected".to_owned();
+            return;
+        };
+        let provider = match self.build_provider() {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error);
+                return;
+            }
+        };
+        let event_tx = self.event_tx.clone();
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        self.model_cancel = Some(cancel_tx);
+        self.state.snapshot.models.busy = true;
+        self.state.snapshot.models.error = None;
+        self.state.snapshot.models.progress = None;
+        self.state.snapshot.models.status_line =
+            format!("Resolving {}…", reference.repository);
+        self.state
+            .set_status(format!("Resolving model {}…", reference.repository));
+        tokio::spawn(async move {
+            let work = provider.resolve(&reference);
+            tokio::select! {
+                result = work => {
+                    let mapped = result.map_err(|error| error.to_string());
+                    let _ = event_tx.send(RuntimeEvent::ModelResolved(mapped)).await;
+                }
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow() {
+                        let _ = event_tx
+                            .send(RuntimeEvent::ModelResolved(Err(
+                                "model resolve cancelled".to_owned(),
+                            )))
+                            .await;
+                    }
+                }
+            }
+        });
+    }
+
+    fn spawn_model_prepare(&mut self) {
+        let Some(resolved) = self.resolved_model.clone() else {
+            self.state.snapshot.models.error =
+                Some("Probe/resolve the model before prepare.".to_owned());
+            self.state.snapshot.models.status_line = "Model not resolved".to_owned();
+            return;
+        };
+        if !self
+            .state
+            .snapshot
+            .models
+            .provider_access
+            .status
+            .is_ready()
+            && self.state.snapshot.models.provider_access.public_read == false
+            && self.current_provider_token().0.is_none()
+        {
+            // still allow public models; prepare will fail truthfully if denied
+        }
+        let provider = match self.build_provider() {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error);
+                return;
+            }
+        };
+        let plan = match build_complete_plan(DeploymentId::new().to_string(), &resolved) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error.to_string());
+                return;
+            }
+        };
+        let existing = self.store.list_model_cache_entries().unwrap_or_default();
+        let cache_root = self.paths.model_cache_dir.clone();
+        let event_tx = self.event_tx.clone();
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        self.model_cancel = Some(cancel_tx);
+        self.state.snapshot.models.busy = true;
+        self.state.snapshot.models.error = None;
+        self.state.snapshot.models.progress = None;
+        self.state.snapshot.models.status_line = format!(
+            "Preparing {} ({} bytes planned)…",
+            resolved.identity.repository, plan.disk_bytes_required
+        );
+        self.state.set_status("Preparing model artifacts…");
+
+        struct ChannelProgress {
+            tx: mpsc::Sender<RuntimeEvent>,
+        }
+        impl ProgressSink for ChannelProgress {
+            fn on_progress(&mut self, event: DownloadProgressEvent) {
+                let _ = self.tx.try_send(RuntimeEvent::ModelProgress(event.progress));
+            }
+        }
+
+        tokio::spawn(async move {
+            let mut progress = ChannelProgress {
+                tx: event_tx.clone(),
+            };
+            let work = prepare_plan(
+                &provider,
+                &resolved,
+                &plan,
+                &cache_root,
+                &existing,
+                &mut progress,
+            );
+            tokio::select! {
+                result = work => {
+                    let mapped = result.map_err(|error| error.to_string());
+                    let _ = event_tx.send(RuntimeEvent::ModelPrepared(mapped)).await;
+                }
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow() {
+                        let _ = event_tx
+                            .send(RuntimeEvent::ModelPrepared(Err(
+                                "model prepare cancelled".to_owned(),
+                            )))
+                            .await;
+                    }
+                }
+            }
+        });
+    }
+
+    fn on_model_access(&mut self, result: Result<ProviderAccessReport, String>) {
+        self.state.snapshot.models.busy = false;
+        match result {
+            Ok(report) => {
+                self.state.snapshot.models.provider_access = report.clone();
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = report.detail.clone();
+                self.state.set_status(report.detail);
+            }
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error.clone());
+                self.state.snapshot.models.status_line = "Provider access check failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
+    fn on_model_resolved(&mut self, result: Result<ResolvedModel, String>) {
+        self.model_cancel = None;
+        self.state.snapshot.models.busy = false;
+        match result {
+            Ok(resolved) => {
+                let record = mesh_core::ModelManifestRecord {
+                    cache_key: resolved.manifest.cache_key(),
+                    provider: resolved.identity.provider.clone(),
+                    repository: resolved.identity.repository.clone(),
+                    revision: resolved.identity.revision.clone(),
+                    adapter_id: resolved.manifest.adapter_id.clone(),
+                    adapter_version: resolved.manifest.adapter_version.clone(),
+                    model_format: resolved.identity.model_format,
+                    quantization: resolved.identity.quantization.clone(),
+                    manifest_hash: resolved.identity.manifest_hash.clone(),
+                    canonical_bytes: mesh_model::canonical_manifest_bytes(&resolved.manifest)
+                        .unwrap_or_default(),
+                    created_at_unix_ms: now_unix_ms(),
+                };
+                if let Err(error) = self.store.upsert_model_manifest(&record) {
+                    warn!(%error, "failed to persist model manifest");
+                }
+                self.state.snapshot.models.resolved_identity = Some(resolved.identity.clone());
+                self.state.snapshot.models.selected_model =
+                    Some(resolved.identity.summary_line());
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = format!(
+                    "Resolved {} ({} tensors)",
+                    resolved.identity.summary_line(),
+                    resolved.manifest.tensors.len()
+                );
+                self.state.set_status(format!(
+                    "Resolved model {}.",
+                    resolved.identity.summary_line()
+                ));
+                self.resolved_model = Some(resolved);
+            }
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error.clone());
+                self.state.snapshot.models.status_line = "Model resolve failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
+    fn on_model_prepared(&mut self, result: Result<PrepareResult, String>) {
+        self.model_cancel = None;
+        self.state.snapshot.models.busy = false;
+        self.state.snapshot.models.progress = None;
+        match result {
+            Ok(prepared) => {
+                for entry in &prepared.cache_entries {
+                    if let Err(error) = self.store.upsert_model_cache_entry(entry) {
+                        warn!(%error, "failed to persist cache entry");
+                    }
+                }
+                self.refresh_model_cache_view();
+                self.state.snapshot.models.resolved_identity = Some(prepared.identity.clone());
+                self.state.snapshot.models.last_prepare_summary = Some(prepared.summary.clone());
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = prepared.summary.clone();
+                self.state.set_status(prepared.summary);
+            }
+            Err(error) => {
+                self.state.snapshot.models.error = Some(error.clone());
+                self.state.snapshot.models.status_line = "Model prepare failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
     fn publish(&self) {
         let _ = self.snapshot_tx.send(self.state.snapshot.clone());
     }
@@ -2239,6 +2721,42 @@ mod tests {
             .await
             .expect("release");
         wait_for(&handle, |snapshot| snapshot.resources.active.is_empty()).await;
+
+        handle.request_shutdown().ok();
+        let _ = task.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn model_selection_updates_snapshot() {
+        let dir = std::env::temp_dir().join(format!("mesh-model-ui-{}", now_unix_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let runtime =
+            NodeRuntime::create("Model PC", StorePaths::isolated(&dir)).expect("runtime");
+        let handle = runtime.handle();
+        let task = tokio::spawn(runtime.run());
+
+        wait_for(&handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+        })
+        .await;
+
+        handle
+            .send(UiCommand::SelectModel {
+                reference: ModelReference::qwen3_4b(),
+            })
+            .await
+            .expect("select model");
+        let selected = wait_for(&handle, |snapshot| {
+            snapshot
+                .models
+                .selected_reference
+                .as_ref()
+                .is_some_and(|item| item.repository == "Qwen/Qwen3-4B")
+        })
+        .await;
+        assert!(selected.models.status_line.contains("Qwen3-4B"));
+        assert!(!selected.models.cache.root.is_empty());
 
         handle.request_shutdown().ok();
         let _ = task.await;

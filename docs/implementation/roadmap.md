@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, A10, and A11–A13 are accepted. P06 foundation types, Safetensors/manifest helpers, and store schema v4 exist. Windows and macOS host proofs remain deferred to the end. Continue P06 Hugging Face adapter, downloads, runtime wiring, and GUI.
+P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, A10, and A11–A13 are accepted. P06 Hugging Face adapter, downloads, cache, runtime wiring, and GUI controls are implemented on Linux. Host proofs for multi-platform Qwen3-8B tensor download remain. Windows and macOS host proofs remain deferred to the end. Before P07, lock A05 and A06.
 
 
 

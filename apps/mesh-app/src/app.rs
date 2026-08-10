@@ -1,5 +1,5 @@
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Theme, Ui, Vec2};
-use mesh_core::{AppScreen, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot};
+use mesh_core::{AppScreen, ModelReference, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot};
 use mesh_node::NodeHandle;
 
 
@@ -8,6 +8,7 @@ pub struct MeshApp {
     snapshots: tokio::sync::watch::Receiver<UiSnapshot>,
     display_name: String,
     invitation_input: String,
+    hf_token_input: String,
     shutdown_sent: bool,
 }
 
@@ -21,6 +22,7 @@ impl MeshApp {
             snapshots,
             display_name,
             invitation_input: String::new(),
+            hf_token_input: String::new(),
             shutdown_sent: false,
         }
     }
@@ -453,6 +455,151 @@ impl MeshApp {
                 }
                 if ui.button("Release all").clicked() {
                     self.send(UiCommand::ReleaseAllLocalReservations);
+                }
+            });
+        });
+
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading("Models");
+            ui.add_space(10.0);
+            let models = &snapshot.models;
+            kv(
+                ui,
+                "Provider",
+                &format!(
+                    "huggingface · {} · {}",
+                    models.provider_access.status.as_str(),
+                    models.provider_access.auth_mode.as_str()
+                ),
+            );
+            kv(ui, "Access", &models.provider_access.detail);
+            kv(
+                ui,
+                "Selected",
+                models
+                    .selected_model
+                    .as_deref()
+                    .unwrap_or("none"),
+            );
+            if let Some(identity) = &models.resolved_identity {
+                kv(ui, "Revision", &identity.revision);
+                kv(ui, "Manifest", &identity.manifest_hash[..identity.manifest_hash.len().min(16)]);
+            }
+            kv(ui, "Status", &models.status_line);
+            if let Some(progress) = &models.progress {
+                let total = progress
+                    .bytes_total
+                    .map(mesh_core::format_bytes)
+                    .unwrap_or_else(|| "?".to_owned());
+                kv(
+                    ui,
+                    "Download",
+                    &format!(
+                        "{} · {} / {} · {}",
+                        progress.phase,
+                        mesh_core::format_bytes(progress.bytes_done),
+                        total,
+                        progress.artifact_path
+                    ),
+                );
+            }
+            if let Some(summary) = &models.last_prepare_summary {
+                ui.label(RichText::new(summary).weak());
+            }
+            if let Some(error) = &models.error {
+                ui.colored_label(Color32::from_rgb(180, 60, 60), error);
+            }
+            kv(
+                ui,
+                "Cache",
+                &format!(
+                    "{} used · {} entries · {}",
+                    mesh_core::format_bytes(models.cache.used_bytes),
+                    models.cache.entry_count,
+                    if models.cache.root.is_empty() {
+                        "—"
+                    } else {
+                        &models.cache.root
+                    }
+                ),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!models.busy, egui::Button::new("Select Qwen3-4B"))
+                    .clicked()
+                {
+                    self.send(UiCommand::SelectModel {
+                        reference: ModelReference::qwen3_4b(),
+                    });
+                }
+                if ui
+                    .add_enabled(!models.busy, egui::Button::new("Select Qwen3-8B"))
+                    .clicked()
+                {
+                    self.send(UiCommand::SelectModel {
+                        reference: ModelReference::qwen3_8b(),
+                    });
+                }
+                if ui
+                    .add_enabled(!models.busy, egui::Button::new("Check access"))
+                    .clicked()
+                {
+                    self.send(UiCommand::RefreshProviderAccess);
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !models.busy && models.selected_reference.is_some(),
+                        egui::Button::new("Probe / resolve"),
+                    )
+                    .clicked()
+                {
+                    self.send(UiCommand::ProbeSelectedModel);
+                }
+                if ui
+                    .add_enabled(
+                        !models.busy && models.resolved_identity.is_some(),
+                        egui::Button::new("Prepare downloads"),
+                    )
+                    .clicked()
+                {
+                    self.send(UiCommand::PrepareSelectedModel);
+                }
+                if ui
+                    .add_enabled(models.busy, egui::Button::new("Cancel"))
+                    .clicked()
+                {
+                    self.send(UiCommand::CancelModelWork);
+                }
+                if ui
+                    .add_enabled(!models.busy, egui::Button::new("Clear cache"))
+                    .clicked()
+                {
+                    self.send(UiCommand::ClearModelCache);
+                }
+            });
+            ui.add_space(8.0);
+            ui.label(RichText::new("Hugging Face token (optional for public models)").weak());
+            ui.add(
+                egui::TextEdit::singleline(&mut self.hf_token_input)
+                    .password(true)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("hf_..."),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Save token").clicked() {
+                    self.send(UiCommand::SaveHuggingFaceToken {
+                        token: self.hf_token_input.clone(),
+                    });
+                    self.hf_token_input.clear();
+                }
+                if ui.button("Delete token").clicked() {
+                    self.send(UiCommand::DeleteHuggingFaceToken);
+                    self.hf_token_input.clear();
                 }
             });
         });

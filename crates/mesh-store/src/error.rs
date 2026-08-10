@@ -13,6 +13,7 @@ pub enum StoreError {
     NotFound(String),
     Core(mesh_core::CoreError),
     Backup(PathBuf, String),
+    CredentialStore(String),
 }
 
 impl Display for StoreError {
@@ -30,6 +31,9 @@ impl Display for StoreError {
             Self::Core(error) => write!(f, "{error}"),
             Self::Backup(path, message) => {
                 write!(f, "migration failed ({message}); backup at {}", path.display())
+            }
+            Self::CredentialStore(message) => {
+                write!(f, "credential store unavailable: {message}")
             }
         }
     }

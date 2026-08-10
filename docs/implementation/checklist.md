@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P05 Linux paths are implemented. A07, A08, A10, and A11–A13 are accepted. P06 foundation started: model types, Safetensors/manifest helpers, store schema v4. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P05 Linux paths are implemented. A07, A08, A10, and A11–A13 are accepted. P06 Hugging Face adapter, downloads, runtime wiring, and GUI controls are implemented on Linux. Windows and macOS host proofs remain.
 
 
 
@@ -332,23 +332,24 @@ Prerequisites:
 Build:
 
 - [x] Define the `ModelProvider` boundary types and local model/store records.
-- [ ] Implement the Hugging Face adapter.
-- [ ] Implement immutable revision resolution against Hub.
+- [x] Implement the Hugging Face adapter.
+- [x] Implement immutable revision resolution against Hub.
 - [x] Implement local artifact cache metadata persistence (schema v4).
 - [x] Implement the Safetensors metadata parser and range merge helpers.
 - [x] Implement range response validation helpers.
-- [ ] Implement range downloads.
-- [ ] Implement complete-shard fallback downloads.
-- [ ] Implement parallel node preparation.
-- [ ] Add GUI model selection.
-- [ ] Add GUI provider-access state and controls.
-- [ ] Add GUI download progress.
-- [ ] Add GUI failures for model selection, provider access, and downloads.
+- [x] Implement range downloads.
+- [x] Implement complete-shard fallback downloads.
+- [x] Implement parallel node preparation.
+- [x] Add GUI model selection.
+- [x] Add GUI provider-access state and controls.
+- [x] Add GUI download progress.
+- [x] Add GUI failures for model selection, provider access, and downloads.
 
-Foundation evidence:
-- `cargo test -p mesh-core -p mesh-model -p mesh-store --lib`
-- `cargo test -p mesh-node --lib`
+Implementation evidence:
+- `cargo test -p mesh-core -p mesh-model -p mesh-store -p mesh-node --lib`
 - `cargo build -p mesh-app`
+- Offline prepare proof: `mesh-model::download::tests::prepare_uses_complete_shard_for_high_coverage`
+- Runtime GUI selection proof: `mesh-node::runtime::tests::model_selection_updates_snapshot`
 
 Proof:
 

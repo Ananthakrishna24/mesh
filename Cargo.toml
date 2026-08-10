@@ -71,4 +71,21 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 igd-next = { version = "0.17.1", default-features = false, features = ["aio_tokio"] }
 crab_nat = "0.8.1"
+keyring = { version = "3.6.3", default-features = false, features = [
+    "apple-native",
+    "windows-native",
+    "linux-native",
+] }
+hf-hub = { version = "0.4.3", default-features = false, features = [
+    "tokio",
+    "rustls-tls",
+] }
+reqwest = { version = "0.12.28", default-features = false, features = [
+    "rustls-tls",
+    "stream",
+    "json",
+] }
+futures-util = "0.3.31"
+tokio-stream = "0.1.17"
+
 

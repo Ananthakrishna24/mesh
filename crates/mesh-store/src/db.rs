@@ -27,6 +27,7 @@ impl Store {
     pub fn open(paths: StorePaths) -> StoreResult<Self> {
         std::fs::create_dir_all(&paths.data_dir)?;
         std::fs::create_dir_all(&paths.cache_dir)?;
+        std::fs::create_dir_all(&paths.model_cache_dir)?;
         let conn = Connection::open(&paths.db_path)?;
         let store = Self { conn, paths };
         store.configure()?;
