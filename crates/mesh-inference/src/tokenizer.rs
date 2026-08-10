@@ -71,19 +71,22 @@ pub fn render_non_thinking_chat(system: Option<&str>, user: &str) -> String {
     out.push_str("<|im_start|>user\n");
     out.push_str(user.trim());
     out.push_str("<|im_end|>\n");
-    out.push_str("<|im_start|>assistant\n");
+    // Official Qwen3 non-thinking generation prompt: empty think block forces direct answer.
+    out.push_str("<|im_start|>assistant\n<think>\n\n</think>\n\n");
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn non_thinking_template_ends_ready_for_assistant() {
         let rendered = render_non_thinking_chat(Some("sys"), "hello");
         assert!(rendered.starts_with("<|im_start|>system\n"));
         assert!(rendered.contains("<|im_start|>user\nhello<|im_end|>\n"));
-        assert!(rendered.ends_with("<|im_start|>assistant\n"));
+        assert!(
+            rendered.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "expected official Qwen3 non-thinking suffix, got {rendered:?}"
+        );
     }
 }

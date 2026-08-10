@@ -35,6 +35,7 @@ pub struct HuggingFaceProvider {
     auth_mode: ProviderAuthMode,
     endpoint: String,
     client: Client,
+    meta_client: Client,
     hf_cache_dir: PathBuf,
 }
 
@@ -44,12 +45,20 @@ impl HuggingFaceProvider {
         auth_mode: ProviderAuthMode,
         hf_cache_dir: impl Into<PathBuf>,
     ) -> ModelResult<Self> {
-        let builder = Client::builder()
+        let client = Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(300))
-            .redirect(reqwest::redirect::Policy::limited(10));
-        let client = builder
+            .timeout(Duration::from_secs(3 * 60 * 60))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|error| ModelError::Http(error.to_string()))?;
+        // Metadata must observe origin headers before CDN redirect. Hugging Face
+        // puts the LFS content SHA in `x-linked-etag`; the CDN ETag is not that digest.
+        let meta_client = Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| ModelError::Http(error.to_string()))?;
         Ok(Self {
@@ -65,6 +74,7 @@ impl HuggingFaceProvider {
             endpoint: std::env::var("HF_ENDPOINT")
                 .unwrap_or_else(|_| "https://huggingface.co".to_owned()),
             client,
+            meta_client,
             hf_cache_dir: hf_cache_dir.into(),
         })
     }
@@ -366,7 +376,7 @@ impl HuggingFaceProvider {
         relative_path: &str,
     ) -> ModelResult<ArtifactMetadata> {
         let url = self.resolve_url(repository, revision, relative_path);
-        let request = self.authorize(self.client.head(&url));
+        let request = self.authorize(self.meta_client.head(&url));
         let response = request.send().await?;
         if response.status() == StatusCode::NOT_FOUND {
             return Err(ModelError::NotFound(relative_path.to_owned()));
@@ -378,50 +388,18 @@ impl HuggingFaceProvider {
                 response.status()
             )));
         }
-        if !response.status().is_success()
-            && response.status() != StatusCode::PARTIAL_CONTENT
-            && response.status() != StatusCode::RANGE_NOT_SATISFIABLE
+        if response.status().is_redirection()
+            || response.status().is_success()
+            || response.status() == StatusCode::PARTIAL_CONTENT
+            || response.status() == StatusCode::RANGE_NOT_SATISFIABLE
         {
-            // Some CDNs dislike HEAD; fall back to a one-byte range.
-            return self
-                .metadata_via_range(repository, revision, relative_path)
-                .await;
+            if let Some(meta) = metadata_from_headers(relative_path, response.headers()) {
+                return Ok(meta);
+            }
         }
-
-        let etag = response
-            .headers()
-            .get(ETAG)
-            .or_else(|| response.headers().get("x-linked-etag"))
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.trim_matches('"').to_owned());
-        let size_bytes = response
-            .headers()
-            .get(CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse().ok())
-            .or_else(|| {
-                response
-                    .headers()
-                    .get("x-linked-size")
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.parse().ok())
-            });
-        let commit_sha = response
-            .headers()
-            .get("x-repo-commit")
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.to_ascii_lowercase());
-        let digest_hex = etag
-            .as_deref()
-            .and_then(etag_to_digest);
-
-        Ok(ArtifactMetadata {
-            relative_path: relative_path.to_owned(),
-            size_bytes,
-            etag,
-            digest_hex,
-            commit_sha,
-        })
+        // Some endpoints dislike HEAD; fall back to a one-byte range without following redirects.
+        self.metadata_via_range(repository, revision, relative_path)
+            .await
     }
 
     async fn metadata_via_range(
@@ -432,7 +410,7 @@ impl HuggingFaceProvider {
     ) -> ModelResult<ArtifactMetadata> {
         let url = self.resolve_url(repository, revision, relative_path);
         let request = self
-            .authorize(self.client.get(&url))
+            .authorize(self.meta_client.get(&url))
             .header(RANGE, "bytes=0-0");
         let response = request.send().await?;
         if response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::FORBIDDEN
@@ -441,35 +419,19 @@ impl HuggingFaceProvider {
                 "metadata denied for {relative_path}"
             )));
         }
-        if !(response.status() == StatusCode::PARTIAL_CONTENT || response.status().is_success()) {
+        if !(response.status().is_redirection()
+            || response.status() == StatusCode::PARTIAL_CONTENT
+            || response.status().is_success())
+        {
             return Err(ModelError::Http(format!(
                 "metadata range failed for {relative_path}: {}",
                 response.status()
             )));
         }
-        let etag = response
-            .headers()
-            .get(ETAG)
-            .or_else(|| response.headers().get("x-linked-etag"))
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.trim_matches('"').to_owned());
-        let size_bytes = response
-            .headers()
-            .get(CONTENT_RANGE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| parse_content_range_header(value).ok())
-            .and_then(|range| range.total);
-        let commit_sha = response
-            .headers()
-            .get("x-repo-commit")
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.to_ascii_lowercase());
-        Ok(ArtifactMetadata {
-            relative_path: relative_path.to_owned(),
-            size_bytes,
-            etag: etag.clone(),
-            digest_hex: etag.as_deref().and_then(etag_to_digest),
-            commit_sha,
+        metadata_from_headers(relative_path, response.headers()).ok_or_else(|| {
+            ModelError::Invalid(format!(
+                "missing size/etag metadata for {relative_path}"
+            ))
         })
     }
 
@@ -696,6 +658,53 @@ struct SafetensorsIndex {
     weight_map: BTreeMap<String, String>,
 }
 
+fn header_str<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn metadata_from_headers(
+    relative_path: &str,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<ArtifactMetadata> {
+    let linked_etag =
+        header_str(headers, "x-linked-etag").map(|value| value.trim_matches('"').to_owned());
+    let plain_etag = headers
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim_matches('"').to_owned());
+    let etag = linked_etag.clone().or(plain_etag);
+    let size_bytes = header_str(headers, "x-linked-size")
+        .and_then(|value| value.parse().ok())
+        .or_else(|| {
+            headers
+                .get(CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok())
+        })
+        .or_else(|| {
+            header_str(headers, CONTENT_RANGE.as_str())
+                .and_then(|value| parse_content_range_header(value).ok())
+                .and_then(|range| range.total)
+        });
+    let commit_sha = header_str(headers, "x-repo-commit").map(|value| value.to_ascii_lowercase());
+    let digest_hex = linked_etag
+        .as_deref()
+        .and_then(etag_to_digest)
+        .or_else(|| etag.as_deref().and_then(etag_to_digest));
+
+    if size_bytes.is_none() && etag.is_none() && digest_hex.is_none() {
+        return None;
+    }
+
+    Some(ArtifactMetadata {
+        relative_path: relative_path.to_owned(),
+        size_bytes,
+        etag,
+        digest_hex,
+        commit_sha,
+    })
+}
+
 fn etag_to_digest(etag: &str) -> Option<String> {
     let cleaned = etag.trim().trim_matches('"');
     if cleaned.len() == 64 && cleaned.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -752,5 +761,29 @@ mod tests {
             )
         );
         assert_eq!(etag_to_digest("W/\"abc\""), None);
+    }
+
+    #[test]
+    fn prefers_linked_etag_digest_over_cdn_etag() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            ETAG,
+            "\"a6f5dec111c34cd267ff4fd7889ef961237b30418d123d5b60b2c1fd3cbd3cc7\""
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "x-linked-etag",
+            "\"328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223\""
+                .parse()
+                .unwrap(),
+        );
+        headers.insert("x-linked-size", "3957900840".parse().unwrap());
+        let meta = metadata_from_headers("model-00001-of-00003.safetensors", &headers).unwrap();
+        assert_eq!(
+            meta.digest_hex.as_deref(),
+            Some("328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223")
+        );
+        assert_eq!(meta.size_bytes, Some(3957900840));
     }
 }

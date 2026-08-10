@@ -201,7 +201,7 @@ impl SingleNodeEngine {
             .map_err(EngineError::from)?;
         let mut events: Vec<TokenResultEvent> = Vec::new();
         let mut generated_ids = Vec::new();
-        let mut stop_reason;
+        let stop_reason;
         let request_id = RequestId::new();
 
         loop {

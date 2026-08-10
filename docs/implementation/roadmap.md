@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node Qwen3 complete-stage path is implemented (tokenizer, seeded sampling, Candle load/generate, GUI Inference card) with CPU default and optional CUDA feature. Linux CUDA host proof still needs a CUDA toolkit and prepared Qwen3-4B weights. Windows/macOS proofs remain deferred.
+P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node Qwen3 complete-stage path is implemented (tokenizer with official non-thinking suffix, seeded sampling, Candle load/generate, GUI Inference card) with CPU default and optional CUDA feature. Linux CPU host proof passed for prepare/load/generate on pinned Qwen3-4B. Linux CUDA still needs a CUDA toolkit; Windows/macOS proofs remain deferred.
 
 
 
@@ -303,7 +303,7 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Finish **P07** host proofs: prepare Qwen3-4B, load, generate on Linux (CUDA when toolkit available). Then P07.5 Windows confidence. Keep multi-host P06 download proof when real hosts are available.
+Finish remaining **P07** host proofs: Linux CUDA when toolkit is available, then macOS Metal and Windows CUDA. Then P07.5 Windows confidence. Keep multi-host P06 download proof when real hosts are available.
 
 
 

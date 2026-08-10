@@ -2997,19 +2997,259 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn p07_single_node_prepare_load_generate_smoke() {
+        if std::env::var_os("MESH_P07_SMOKE").is_none() {
+            eprintln!("skipping P07 host smoke; set MESH_P07_SMOKE=1 to run");
+            return;
+        }
+
+        let dir = std::env::var_os("MESH_P07_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("mesh-p07-smoke")
+            });
+        std::fs::create_dir_all(&dir).expect("create smoke data dir");
+
+        let max_new_tokens = std::env::var("MESH_P07_MAX_NEW_TOKENS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(8)
+            .max(1);
+        let prepare_timeout_secs = std::env::var("MESH_P07_PREPARE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(6 * 60 * 60);
+        let load_timeout_secs = std::env::var("MESH_P07_LOAD_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60 * 60);
+        let generate_timeout_secs = std::env::var("MESH_P07_GENERATE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(2 * 60 * 60);
+
+        let runtime =
+            NodeRuntime::create("P07 Smoke PC", StorePaths::isolated(&dir)).expect("runtime");
+        let handle = runtime.handle();
+        let task = tokio::spawn(runtime.run());
+
+        let boot = wait_for_timeout(
+            &handle,
+            Duration::from_secs(60),
+            |snapshot| {
+                matches!(
+                    snapshot.phase,
+                    RuntimePhase::AwaitingOnboarding | RuntimePhase::Ready
+                )
+            },
+        )
+        .await;
+        if boot.phase == RuntimePhase::AwaitingOnboarding {
+            handle
+                .send(UiCommand::CreateMesh {
+                    display_name: "P07 Smoke PC".to_owned(),
+                })
+                .await
+                .expect("create mesh");
+        }
+        wait_for_timeout(
+            &handle,
+            Duration::from_secs(60),
+            |snapshot| snapshot.phase == RuntimePhase::Ready,
+        )
+        .await;
+
+        handle
+            .send(UiCommand::SelectModel {
+                reference: ModelReference::qwen3_4b(),
+            })
+            .await
+            .expect("select model");
+        wait_for_timeout(&handle, Duration::from_secs(30), |snapshot| {
+            snapshot
+                .models
+                .selected_reference
+                .as_ref()
+                .is_some_and(|item| item.repository == "Qwen/Qwen3-4B")
+        })
+        .await;
+
+        handle
+            .send(UiCommand::RefreshProviderAccess)
+            .await
+            .expect("refresh provider access");
+        let access = wait_for_timeout(&handle, Duration::from_secs(120), |snapshot| {
+            !snapshot.models.busy
+                && (snapshot.models.provider_access.status
+                    != mesh_core::ProviderAccessStatus::Unchecked
+                    || snapshot.models.error.is_some())
+        })
+        .await;
+        assert!(
+            access.models.error.is_none(),
+            "provider access failed: {:?}",
+            access.models.error
+        );
+        eprintln!(
+            "P07 provider access: status={:?} detail={}",
+            access.models.provider_access.status,
+            access.models.provider_access.detail
+        );
+        handle
+            .send(UiCommand::ProbeSelectedModel)
+            .await
+            .expect("probe/resolve model");
+        let resolved = wait_for_timeout(&handle, Duration::from_secs(30 * 60), |snapshot| {
+            !snapshot.models.busy
+                && (snapshot.models.resolved_identity.is_some() || snapshot.models.error.is_some())
+        })
+        .await;
+        assert!(
+            resolved.models.error.is_none(),
+            "model resolve failed: {:?}",
+            resolved.models.error
+        );
+        assert!(
+            resolved.models.resolved_identity.is_some(),
+            "resolved identity missing: {}",
+            resolved.models.status_line
+        );
+
+        handle
+            .send(UiCommand::PrepareSelectedModel)
+            .await
+            .expect("prepare model");
+        let prepared = wait_for_timeout(
+            &handle,
+            Duration::from_secs(prepare_timeout_secs),
+            |snapshot| {
+                !snapshot.models.busy
+                    && (snapshot.models.last_prepare_summary.is_some()
+                        || snapshot.models.error.is_some())
+            },
+        )
+        .await;
+        assert!(
+            prepared.models.error.is_none(),
+            "model prepare failed: {:?}",
+            prepared.models.error
+        );
+        let prepare_summary = prepared
+            .models
+            .last_prepare_summary
+            .clone()
+            .expect("prepare summary");
+        eprintln!("P07 prepare: {prepare_summary}");
+
+        handle
+            .send(UiCommand::LoadSelectedModel)
+            .await
+            .expect("load model");
+        let loaded = wait_for_timeout(&handle, Duration::from_secs(load_timeout_secs), |snapshot| {
+            !snapshot.inference.busy
+                && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                    || snapshot.inference.phase == Some(InferencePhase::Failed)
+                    || snapshot.inference.error.is_some())
+        })
+        .await;
+        assert!(
+            loaded.inference.error.is_none(),
+            "model load/warmup failed: {:?}",
+            loaded.inference.error
+        );
+        assert_eq!(loaded.inference.phase, Some(InferencePhase::Ready));
+        let backend = loaded
+            .inference
+            .backend
+            .clone()
+            .unwrap_or_else(|| "unknown".to_owned());
+        eprintln!(
+            "P07 load ready backend={backend} model={:?}",
+            loaded.inference.model_line
+        );
+
+        handle
+            .send(UiCommand::Generate {
+                prompt: "Say hello in one short sentence.".to_owned(),
+                max_new_tokens,
+                temperature: 0.0,
+                seed: 1,
+            })
+            .await
+            .expect("generate");
+        let generated = wait_for_timeout(
+            &handle,
+            Duration::from_secs(generate_timeout_secs),
+            |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.generated_tokens > 0
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            },
+        )
+        .await;
+        assert!(
+            generated.inference.error.is_none(),
+            "generation failed: {:?}",
+            generated.inference.error
+        );
+        assert!(
+            generated.inference.generated_tokens > 0,
+            "expected generated tokens, got snapshot {:?}",
+            generated.inference
+        );
+        assert!(
+            !generated.inference.output_text.trim().is_empty(),
+            "expected non-empty output text"
+        );
+        assert!(
+            !generated.inference.output_text.contains("<think>"),
+            "non-thinking profile must not emit open think markers: {:?}",
+            generated.inference.output_text
+        );
+        eprintln!(
+            "P07 generate backend={backend} tokens={} stop={:?} output={:?}",
+            generated.inference.generated_tokens,
+            generated.inference.stop_reason,
+            generated.inference.output_text
+        );
+
+        handle.request_shutdown().ok();
+        let _ = task.await;
+    }
+
+
     async fn wait_for(
         handle: &NodeHandle,
         predicate: impl Fn(&UiSnapshot) -> bool,
     ) -> UiSnapshot {
+        wait_for_timeout(handle, Duration::from_secs(60), predicate).await
+    }
+
+    async fn wait_for_timeout(
+        handle: &NodeHandle,
+        timeout: Duration,
+        predicate: impl Fn(&UiSnapshot) -> bool,
+    ) -> UiSnapshot {
         let mut snapshots = handle.subscribe_snapshots();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let snapshot = snapshots.borrow().clone();
             if predicate(&snapshot) {
                 return snapshot;
             }
             if tokio::time::Instant::now() >= deadline {
-                panic!("timeout waiting for snapshot: {snapshot:?}");
+                panic!(
+                    "timeout after {timeout:?} waiting for snapshot: phase={:?} status={} models={} inference={:?}",
+                    snapshot.phase,
+                    snapshot.status_message,
+                    snapshot.models.status_line,
+                    snapshot.inference
+                );
             }
             match tokio::time::timeout(Duration::from_millis(200), snapshots.changed()).await {
                 Ok(Ok(())) => {}

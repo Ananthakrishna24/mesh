@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU default and optional `cuda` feature; host CUDA/Metal proofs remain. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU host proof (prepare/load/generate) and optional `cuda` feature; host CUDA/Metal proofs remain. Windows and macOS host proofs remain.
 
 
 
@@ -385,13 +385,14 @@ Build:
 - [x] Implement the dense Qwen3 Model Family Adapter.
   - Evidence: P06 mapping + P07 complete-stage Candle load for assigned whole shards.
 - [x] Implement a complete `Qwen/Qwen3-4B` stage.
-  - Evidence: `mesh-compute::LoadedQwen3` + `mesh-inference::SingleNodeEngine` complete path; Linux unit/runtime compile verified. Full generate host proof still needs prepared weights.
+  - Evidence: `mesh-compute::LoadedQwen3` + `mesh-inference::SingleNodeEngine` complete path; Linux CPU host prepare/load/generate smoke passed for pinned `Qwen/Qwen3-4B@1cfa9a720891`.
 - [ ] Implement and natively validate the Candle CUDA stage on Windows.
 - [ ] Implement and natively validate the Candle CUDA stage on Linux.
-  - Code path: `mesh-compute` feature `cuda`; host lacks CUDA toolkit in this environment so runtime falls back to CPU when CUDA init fails.
+  - Code path: `mesh-compute` feature `cuda`; this host has driver/NVML but no CUDA toolkit/`nvcc`, so default runtime is CPU.
 - [ ] Implement and validate the Candle Metal stage on macOS Apple Silicon.
 - [x] Implement the Qwen3 tokenizer.
 - [x] Implement the non-thinking chat template.
+  - Evidence: official Qwen3 non-thinking suffix (`assistant` + empty `<think>` block) in `render_non_thinking_chat`; Linux generate returns direct answer text.
 - [x] Implement the Qwen3 KV cache.
   - Evidence: Candle layer KV via model forward; reserve math from A06 in `stage_kv_reserve_bytes`.
 - [x] Implement seeded sampling.
@@ -402,6 +403,7 @@ Proof:
 
 - [ ] The pinned Qwen3-4B model produces valid streamed output on Windows CUDA under the accepted correctness profile.
 - [ ] The pinned Qwen3-4B model produces valid streamed output on Linux CUDA under the accepted correctness profile.
+  - Linux CPU host evidence (not CUDA): `MESH_P07_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P07_MAX_NEW_TOKENS=16 cargo test -p mesh-node --lib --release runtime::tests::p07_single_node_prepare_load_generate_smoke -- --exact --nocapture` → prepare cache-hit 7.5 GiB, load `backend=cpu`, generate `tokens=3 stop=eos output="Hello!"` (2026-08-10). HF metadata fix: prefer origin `x-linked-etag` LFS digest over CDN ETag.
 - [ ] The pinned Qwen3-4B model produces valid streamed output on macOS Metal under the accepted correctness profile.
 - [ ] P07 proof complete on all three required backends.
 
