@@ -79,7 +79,7 @@ Two coordinators may choose the same GPU from stale capability reports. The Loca
 
 ### Growing KV cache
 
-Memory planning uses maximum accepted context length, concurrent sequences, layer assignment, and KV data type. A deployment must reject a request whose declared limits exceed its reservation.
+Memory planning uses maximum accepted context length, concurrent sequences, layer assignment, and KV data type. A deployment must reject a request whose declared limits exceed its reservation. Canonical sizing rules: [KV-cache contract](kv-cache.md).
 
 ### Apple unified memory
 
@@ -115,7 +115,7 @@ Every stage reports the same immutable model revision, manifest hash, quantizati
 
 ### Numerical differences
 
-CUDA and Metal may produce small floating-point differences. The final stage owns sampling state and random seed. Tests use tolerances for tensors and exact checks only where the contract guarantees exactness.
+CUDA and Metal may produce small floating-point differences. The final stage owns sampling state and random seed. Tests use tolerances for tensors and exact checks only where the contract guarantees exactness. Canonical sampling rules: [Tokenizer and sampling ownership](tokenizer-and-sampling.md).
 
 ### Cancellation
 

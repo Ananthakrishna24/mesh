@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Active design |
-| Current phase | A11–A13 accepted; P06 model provider and cache next |
+| Current phase | A05/A06 accepted; P07 single-node inference next |
 | Implementation language | Rust |
 | First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
 
@@ -25,13 +25,15 @@ This folder is the project memory. Read it before changing architecture or code.
 11. [Distributed LLM inference](architecture/inference/README.md)
 12. [Activation tensor frame](architecture/protocol/activation-frame.md)
 13. [Qwen3 model family](architecture/inference/qwen3-model-family.md)
-14. [Provider-backed model distribution](architecture/inference/model-distribution.md)
-15. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
-16. [GPU backends](architecture/compute/gpu-backends.md)
-17. [Architecture and implementation roadmap](implementation/roadmap.md)
-18. [Roadmap implementation checklist](implementation/checklist.md)
-19. [Rust workspace plan](implementation/rust-workspace.md)
-20. [Architecture decisions](decisions/)
+14. [Tokenizer and sampling ownership](architecture/inference/tokenizer-and-sampling.md)
+15. [KV-cache contract](architecture/inference/kv-cache.md)
+16. [Provider-backed model distribution](architecture/inference/model-distribution.md)
+17. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
+18. [GPU backends](architecture/compute/gpu-backends.md)
+19. [Architecture and implementation roadmap](implementation/roadmap.md)
+20. [Roadmap implementation checklist](implementation/checklist.md)
+21. [Rust workspace plan](implementation/rust-workspace.md)
+22. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -50,6 +52,8 @@ This folder is the project memory. Read it before changing architecture or code.
 | How is an LLM placed and run? | [Distributed LLM inference](architecture/inference/README.md) |
 | What is the activation tensor wire format? | [Activation tensor frame](architecture/protocol/activation-frame.md) |
 | Which models are the first proofs? | [Qwen3 model family](architecture/inference/qwen3-model-family.md) |
+| Who tokenizes and samples? | [Tokenizer and sampling ownership](architecture/inference/tokenizer-and-sampling.md) and [ADR-0016](decisions/0016-tokenizer-sampling-kv-cache.md) |
+| How is KV cache laid out and sized? | [KV-cache contract](architecture/inference/kv-cache.md) and [ADR-0016](decisions/0016-tokenizer-sampling-kv-cache.md) |
 | How are partial model weights downloaded and synchronized? | [Provider-backed model distribution](architecture/inference/model-distribution.md) |
 | Which inference work can run in parallel? | [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md) |
 | Why QUIC and Quinn? | [ADR-0001](decisions/0001-direct-quic-transport.md) |

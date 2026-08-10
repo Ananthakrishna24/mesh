@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, A10, and A11–A13 are accepted. P06 Hugging Face adapter, downloads, cache, runtime wiring, and GUI controls are implemented on Linux. Host proofs for multi-platform Qwen3-8B tensor download remain. Windows and macOS host proofs remain deferred to the end. Before P07, lock A05 and A06.
+P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, P05 resource reservations, and P06 Hugging Face model provider/cache are implemented on Linux. A05, A06, A07, A08, A10, and A11–A13 are accepted. Host proofs for multi-platform Qwen3-8B tensor download remain. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P07 after A01/A02 profile work during that phase.
 
 
 
@@ -72,17 +72,15 @@ Control serialization, protocol versioning, errors, and activation framing are a
 
 ### A05 — Tokenizer and sampling ownership
 
-Preferred rule:
+Accepted in [Tokenizer and sampling ownership](../architecture/inference/tokenizer-and-sampling.md) and [ADR-0016](../decisions/0016-tokenizer-sampling-kv-cache.md).
 
-- Coordinator owns the tokenizer.
-- First stage owns embeddings.
-- Final stage owns output head, sampling state, and next-token selection.
-
-Define temperature, top-k, top-p, repetition penalties, random seeds, token history, and end-of-sequence handling.
+Coordinator owns tokenizer and streaming. First stage owns embeddings. Final stage owns output head, sampling state, and next-token selection. Non-thinking defaults, seed rules, stop reasons, and control-path token feedback are locked.
 
 ### A06 — KV-cache contract
 
-Define layout, data type, maximum context, batch allocation, grouped-query attention, sliding windows, cancellation, memory estimation, and eviction.
+Accepted in [KV-cache contract](../architecture/inference/kv-cache.md) and [ADR-0016](../decisions/0016-tokenizer-sampling-kv-cache.md).
+
+Per-stage FP16 K/V layout, GQA packing, 4,096 context, batch-1 allocation, cancellation free, estimation formula, and request-scoped eviction are locked.
 
 ### A07 — Network benchmark and placement cost
 
@@ -305,7 +303,7 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Continue P06 model provider and cache (HF adapter, downloads, runtime/GUI). Keep Windows/macOS host proofs until the end. Before P07 inference, also lock A05 and A06.
+Start **P07** single-node Qwen3-4B inference (Linux CUDA first). Keep Windows/macOS host proofs until P07.5 / end. Multi-host P06 download proof remains when real hosts are available.
 
 
 

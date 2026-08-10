@@ -30,6 +30,8 @@ The accepted desktop onboarding and inference architecture are documented but no
 - [Control protocol and versioning](protocol/control-protocol.md)
 - [Distributed LLM inference](inference/README.md)
 - [Provider-backed partial model distribution](inference/model-distribution.md)
+- [Tokenizer and sampling ownership](inference/tokenizer-and-sampling.md)
+- [KV-cache contract](inference/kv-cache.md)
 - [Inference parallelism and edge cases](inference/parallelism-and-edge-cases.md)
 - [Qwen3 dense 4B and 8B model family](inference/qwen3-model-family.md)
 - [Activation tensor wire format](protocol/activation-frame.md)

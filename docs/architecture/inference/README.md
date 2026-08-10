@@ -7,6 +7,8 @@
 | Parent | [Architecture overview](../README.md) |
 | Related | [Parallelism and edge cases](parallelism-and-edge-cases.md) |
 | Related | [Provider-backed model distribution](model-distribution.md) |
+| Related | [Tokenizer and sampling ownership](tokenizer-and-sampling.md) |
+| Related | [KV-cache contract](kv-cache.md) |
 | First model family | [Qwen3 dense 4B and 8B](qwen3-model-family.md) |
 
 ## Goal
@@ -202,14 +204,16 @@ If one node rejects or times out, the coordinator releases every accepted reserv
 
 ## Pipeline request flow
 
-1. The coordinator creates a unique request ID.
-2. The first stage tokenizes or receives token IDs and creates embeddings.
+1. The coordinator creates a unique request ID and tokenizes the rendered prompt.
+2. The first stage receives token IDs and creates embeddings.
 3. Each stage receives an activation, runs its continuous layer range, and sends one activation to the next stage.
 4. Each stage keeps the KV cache for its own layers.
 5. The final stage calculates token scores and samples the next token.
-6. The final stage sends the token ID to the first stage.
+6. The final stage sends the token ID to the first stage on the control path.
 7. The final stage also sends the token result to the coordinator.
 8. The loop stops on end-of-sequence, length limit, cancellation, or failure.
+
+Canonical contracts: [Tokenizer and sampling ownership](tokenizer-and-sampling.md), [KV-cache contract](kv-cache.md).
 
 Do not send KV caches across nodes during normal generation.
 

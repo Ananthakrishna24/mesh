@@ -149,10 +149,13 @@ The current Candle `ModelForCausalLM` constructs the complete model. The mesh ad
 
 Each stage stores keys and values only for its assigned layers. Cache sizing reads Qwen3 grouped-query attention fields from the resolved configuration.
 
+Canonical contract: [KV-cache contract](kv-cache.md)
+
 The first profile supports:
 
 - Batch size 1.
 - Maximum 4,096 tokens.
+- FP16 K/V with GQA (`num_kv_heads`, not query heads).
 - No live cache migration.
 - Full cache release on request completion, cancellation, or stage failure.
 
@@ -161,6 +164,8 @@ Dynamic batching and larger contexts come after the basic distributed proof.
 ## Prompt and sampling profile
 
 Use Qwen3 non-thinking chat formatting for the first proofs. Thinking mode increases output length and makes latency tests less predictable.
+
+Canonical contract: [Tokenizer and sampling ownership](tokenizer-and-sampling.md)
 
 Default non-thinking sampling follows the model guidance where implemented:
 

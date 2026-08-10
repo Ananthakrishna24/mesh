@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P05 Linux paths are implemented. A07, A08, A10, and A11–A13 are accepted. P06 Hugging Face adapter, downloads, runtime wiring, and GUI controls are implemented on Linux. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. Windows and macOS host proofs remain. Next implementation phase is P07 single-node inference.
 
 
 
@@ -96,28 +96,34 @@ Later quantization gate:
 
 ### A05 — Tokenizer and sampling ownership
 
-- [ ] Decide tokenizer ownership, preferring the coordinator.
-- [ ] Decide embeddings ownership, preferring the first stage.
-- [ ] Decide ownership of the output head, sampling state, and next-token selection, preferring the final stage.
-- [ ] Define temperature behavior.
-- [ ] Define top-k behavior.
-- [ ] Define top-p behavior.
-- [ ] Define repetition penalties.
-- [ ] Define random seed behavior.
-- [ ] Define token-history ownership and handling.
-- [ ] Define end-of-sequence handling.
+- [x] Decide tokenizer ownership, preferring the coordinator.
+- [x] Decide embeddings ownership, preferring the first stage.
+- [x] Decide ownership of the output head, sampling state, and next-token selection, preferring the final stage.
+- [x] Define temperature behavior.
+- [x] Define top-k behavior.
+- [x] Define top-p behavior.
+- [x] Define repetition penalties.
+- [x] Define random seed behavior.
+- [x] Define token-history ownership and handling.
+- [x] Define end-of-sequence handling.
+
+Canonical contract: [Tokenizer and sampling ownership](../architecture/inference/tokenizer-and-sampling.md)
+Decision: [ADR-0016](../decisions/0016-tokenizer-sampling-kv-cache.md)
 
 ### A06 — KV-cache contract
 
-- [ ] Define KV-cache layout.
-- [ ] Define KV-cache data type.
-- [ ] Define maximum context handling.
-- [ ] Define batch allocation.
-- [ ] Define grouped-query attention handling.
-- [ ] Define sliding-window handling.
-- [ ] Define cancellation behavior.
-- [ ] Define memory estimation.
-- [ ] Define eviction behavior.
+- [x] Define KV-cache layout.
+- [x] Define KV-cache data type.
+- [x] Define maximum context handling.
+- [x] Define batch allocation.
+- [x] Define grouped-query attention handling.
+- [x] Define sliding-window handling.
+- [x] Define cancellation behavior.
+- [x] Define memory estimation.
+- [x] Define eviction behavior.
+
+Canonical contract: [KV-cache contract](../architecture/inference/kv-cache.md)
+Decision: [ADR-0016](../decisions/0016-tokenizer-sampling-kv-cache.md)
 
 ### A07 — Network benchmark and placement cost
 
@@ -365,12 +371,12 @@ Prerequisites:
 
 - [ ] Resolve A01 Qwen3 dense Model Family Adapter.
 - [ ] Lock the A02 first correctness profile.
-- [ ] Resolve A05 tokenizer and sampling ownership.
-- [ ] Resolve A06 KV-cache contract.
-- [ ] Resolve A07 network benchmark and placement cost.
-- [ ] Resolve A11 provider manifest generation.
-- [ ] Resolve A12 partial download validation.
-- [ ] Resolve A13 provider access and local cache.
+- [x] Resolve A05 tokenizer and sampling ownership.
+- [x] Resolve A06 KV-cache contract.
+- [x] Resolve A07 network benchmark and placement cost.
+- [x] Resolve A11 provider manifest generation.
+- [x] Resolve A12 partial download validation.
+- [x] Resolve A13 provider access and local cache.
 
 Build:
 
@@ -511,8 +517,8 @@ These items remain explicitly out of scope until the roadmap changes:
 - [x] Select router-mapping crates before automatic internet enrollment is complete (A08).
 - [x] Resolve peer-record merge rules before automatic internet enrollment is complete (A10).
 
-- [ ] Lock tokenizer and sampling before P07 inference (A05).
-- [ ] Lock the KV-cache contract before P07 inference (A06).
+- [x] Lock tokenizer and sampling before P07 inference (A05).
+- [x] Lock the KV-cache contract before P07 inference (A06).
 - [x] Lock network placement before P07 inference (A07).
 
 - [x] Lock provider manifest generation before P06 model provider and cache (A11).
