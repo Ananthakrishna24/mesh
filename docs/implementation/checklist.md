@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs (prepare/load/generate); Metal remains. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. Metal/Windows host proofs remain.
 
 
 
@@ -431,16 +431,22 @@ CI, after the implementation shape is stable enough to trust:
 
 Build:
 
-- [ ] Implement full-model replicas.
-- [ ] Implement request routing.
+- [x] Implement full-model replicas.
+  - Evidence: each loaded node advertises `ReplicaStatus` and appears in `InferenceView.replicas`.
+- [x] Implement request routing.
+  - Evidence: coordinator selects least-loaded ready replica (`select_replica_route`) and sends `InferenceRequest` over control stream.
 - [ ] Implement dynamic batching.
-- [ ] Implement per-node concurrency limits.
-- [ ] Implement load reporting.
-- [ ] Implement health reporting.
+- [x] Implement per-node concurrency limits.
+  - Evidence: `FIRST_MAX_CONCURRENT_REQUESTS` slot tracking; busy replicas rejected / not selected.
+- [x] Implement load reporting.
+  - Evidence: `ReplicaStatus.active_requests` / max slots advertised to peers.
+- [x] Implement health reporting.
+  - Evidence: `ReplicaStatus.ready` / `healthy` plus GUI replica lines.
 
 Proof:
 
 - [ ] Independent Qwen3-4B requests run concurrently on separate complete-model nodes.
+  - Linux dual-node remote path evidence (one loaded worker + coordinator route): `MESH_P08_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P08_MAX_NEW_TOKENS=8 cargo test -p mesh-node --lib --release --features cuda runtime::tests::p08_remote_replica_generate_smoke -- --exact --nocapture` → worker load `backend=cuda`, coord sees `P08 Worker · cuda · 0/1/remote · ready`, generate `routed=<worker> tokens=3 stop=eos output="Hi!"` (2026-08-10). Full concurrent two-loaded-replica proof still needs two model-capable hosts.
 
 ### P09 — Layer pipeline inference
 

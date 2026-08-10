@@ -13,23 +13,24 @@ use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
     AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_CACHE_MAX_BYTES,
     DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress,
-    GpuResourceAmount, HardwareSummaryView, InferencePhase, LinkMeasurement, LocalIdentity,
-    LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress,
-    ModelReference, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, ProviderAccessReport,
-    ProviderAuthMode, RecoveryAction, ReservationCommit, ReservationId, ReservationRelease,
-    ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams, UiCommand,
-    UiSnapshot, filter_advertised_candidates, merge_peer_records, now_unix_ms,
+    GpuResourceAmount, HardwareSummaryView, InferencePhase, InferenceRequestSpec, LinkMeasurement,
+    LocalIdentity, LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView,
+    ModelDownloadProgress, ModelReference, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary,
+    ProviderAccessReport, ProviderAuthMode, RecoveryAction, ReplicaEndpointView, ReplicaHealth,
+    RequestId, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest, ResourceAmount,
+    ResourceQuery, RuntimePhase, SamplingParams, StopReason, TokenResultEvent, UiCommand, UiSnapshot,
+    filter_advertised_candidates, merge_peer_records, now_unix_ms, select_replica_route,
     sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
-use mesh_inference::{LocalResourceManager, ReserveOutcome, SingleNodeEngine};
+use mesh_inference::{load_mesh_tokenizer, LocalResourceManager, MeshTokenizer, ReserveOutcome, SingleNodeEngine};
 use mesh_model::{
     DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
     build_complete_plan, cleanup_incomplete, prepare_plan,
 };
 use mesh_net::{
-    EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint, RouterMappingHandle,
-    SessionCommand, SessionEvent, advertised_candidates, attempt_router_mapping,
+    EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint, ReplicaStatusMessage,
+    RouterMappingHandle, SessionCommand, SessionEvent, advertised_candidates, attempt_router_mapping,
     collect_local_candidates, complete_inviter_handshake, generate_node_certificate,
     new_attempt_id, perform_joiner_handshake, run_connected_session, send_udp_probes,
     start_at_after, wait_until_unix_ms, with_manual_candidate, with_peer_observed,
@@ -185,7 +186,26 @@ impl RuntimeState {
                 hardware_line: previous
                     .as_ref()
                     .and_then(|item| item.hardware_line.clone()),
-                link: previous.and_then(|item| item.link),
+                link: previous.as_ref().and_then(|item| item.link.clone()),
+                replica_model_line: previous
+                    .as_ref()
+                    .and_then(|item| item.replica_model_line.clone()),
+                replica_backend: previous
+                    .as_ref()
+                    .and_then(|item| item.replica_backend.clone()),
+                replica_ready: previous.as_ref().is_some_and(|item| item.replica_ready),
+                replica_healthy: previous.as_ref().is_some_and(|item| item.replica_healthy),
+                replica_active_requests: previous
+                    .as_ref()
+                    .map(|item| item.replica_active_requests)
+                    .unwrap_or(0),
+                replica_max_concurrent_requests: previous
+                    .as_ref()
+                    .map(|item| item.replica_max_concurrent_requests)
+                    .unwrap_or(0),
+                replica_deployment_id: previous
+                    .as_ref()
+                    .and_then(|item| item.replica_deployment_id.clone()),
             },
         );
         if let Some(existing) = self
@@ -327,11 +347,27 @@ enum RuntimeEvent {
         prompt: String,
         engine: Box<SingleNodeEngine>,
         result: Result<mesh_inference::GenerationOutput, String>,
+        request_id: RequestId,
+        remote_owner: Option<NodeId>,
     },
+    // reserved for future mid-stream remote token fan-in on the runtime event bus
 }
 
 struct LiveSession {
     commands: mpsc::Sender<SessionCommand>,
+}
+
+struct PendingRemoteGeneration {
+    peer_node_id: NodeId,
+    request_id: RequestId,
+    deployment_id: DeploymentId,
+    prompt: String,
+    token_ids: Vec<u32>,
+}
+
+struct ServingRemoteRequest {
+    owner_node_id: NodeId,
+    cancel: watch::Sender<bool>,
 }
 
 pub struct NodeRuntime {
@@ -360,7 +396,12 @@ pub struct NodeRuntime {
     resolved_model: Option<ResolvedModel>,
     last_prepare: Option<PrepareResult>,
     inference_engine: Option<SingleNodeEngine>,
+    coordinator_tokenizer: Option<MeshTokenizer>,
     generation_cancel: Option<watch::Sender<bool>>,
+    local_active_requests: u32,
+    local_generation_request_id: Option<RequestId>,
+    pending_remote_generation: Option<PendingRemoteGeneration>,
+    serving_remote_requests: HashMap<RequestId, ServingRemoteRequest>,
 }
 
 impl NodeRuntime {
@@ -419,7 +460,12 @@ impl NodeRuntime {
             resolved_model: None,
             last_prepare: None,
             inference_engine: None,
+            coordinator_tokenizer: None,
             generation_cancel: None,
+            local_active_requests: 0,
+            local_generation_request_id: None,
+            pending_remote_generation: None,
+            serving_remote_requests: HashMap::new(),
         })
     }
 
@@ -824,6 +870,7 @@ impl NodeRuntime {
                 }
                 self.mark_peer_update_dirty();
                 self.maybe_introduce_unconnected_peers(peer.node_id).await;
+                self.announce_replica_status_to(peer.node_id);
                 self.publish();
             }
             RuntimeEvent::PeerFailed { message } => {
@@ -855,10 +902,18 @@ impl NodeRuntime {
                 self.on_model_loaded(result);
                 self.publish();
             }
-            RuntimeEvent::GenerationFinished { prompt, engine, result } => {
-                self.on_generation_finished(prompt, engine, result);
+            RuntimeEvent::GenerationFinished {
+                prompt,
+                engine,
+                result,
+                request_id,
+                remote_owner,
+            } => {
+                self.on_generation_finished(prompt, engine, result, request_id, remote_owner)
+                    .await;
                 self.publish();
             }
+
         }
     }
 
@@ -993,6 +1048,35 @@ impl NodeRuntime {
             SessionEvent::ReservationRelease { from_peer, release } => {
                 self.handle_reservation_release(from_peer, release);
             }
+            SessionEvent::ReplicaStatus { from_peer, status } => {
+                self.on_replica_status(from_peer, status);
+                self.publish();
+            }
+            SessionEvent::InferenceRequest { from_peer, request } => {
+                self.on_remote_inference_request(from_peer, request).await;
+                self.publish();
+            }
+            SessionEvent::TokenResult { from_peer, event } => {
+                let _ = from_peer;
+                self.on_remote_token(event);
+                self.publish();
+            }
+            SessionEvent::CancelRequest {
+                from_peer,
+                deployment_id,
+                request_id,
+                reason,
+            } => {
+                let _ = (from_peer, deployment_id, reason);
+                if let Some(serving) = self.serving_remote_requests.get(&request_id) {
+                    let _ = serving.cancel.send(true);
+                }
+                if self.local_generation_request_id == Some(request_id) {
+                    if let Some(cancel) = self.generation_cancel.as_ref() {
+                        let _ = cancel.send(true);
+                    }
+                }
+            }
             SessionEvent::Failed {
                 peer_node_id,
                 message,
@@ -1000,10 +1084,15 @@ impl NodeRuntime {
                 warn!(%peer_node_id, %message, "peer session failed");
                 self.sessions.remove(&peer_node_id);
                 self.release_owner_reservations(peer_node_id);
+                self.fail_pending_remote_for_peer(peer_node_id, message.clone());
+                self.cancel_serving_for_peer(peer_node_id);
                 if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
                     peer.connected = false;
+                    peer.replica_ready = false;
+                    peer.replica_healthy = false;
                     self.state.rebuild_peer_summaries();
                 }
+                self.refresh_replica_views();
                 self.publish();
             }
         }
@@ -2265,6 +2354,19 @@ impl NodeRuntime {
         }
     }
 
+    fn ensure_coordinator_tokenizer(&mut self) {
+        if self.coordinator_tokenizer.is_some() {
+            return;
+        }
+        let Some(resolved) = self.resolved_model.as_ref() else {
+            return;
+        };
+        match load_mesh_tokenizer(&self.paths.model_cache_dir, resolved, None) {
+            Ok(tokenizer) => self.coordinator_tokenizer = Some(tokenizer),
+            Err(error) => warn!(%error, "failed to load coordinator tokenizer"),
+        }
+    }
+
     fn on_model_prepared(&mut self, result: Result<PrepareResult, String>) {
         self.model_cancel = None;
         self.state.snapshot.models.busy = false;
@@ -2283,6 +2385,7 @@ impl NodeRuntime {
                 self.state.snapshot.models.status_line = prepared.summary.clone();
                 self.state.set_status(prepared.summary.clone());
                 self.last_prepare = Some(prepared);
+                self.ensure_coordinator_tokenizer();
             }
             Err(error) => {
                 self.state.snapshot.models.error = Some(error.clone());
@@ -2341,19 +2444,24 @@ impl NodeRuntime {
                     self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
                     self.state.snapshot.inference.error = Some(error.to_string());
                     self.state.snapshot.inference.status_line = "Warm-up failed".to_owned();
-                    self.state.set_status(format!("Model warm-up failed: {error}"));
+                    self.state.set_status(error.to_string());
                     return;
                 }
                 self.state.snapshot.inference = engine.view("", "", None);
                 self.state
                     .set_status(format!("Model ready on {}.", engine.backend.as_str()));
+                self.coordinator_tokenizer = Some(engine.tokenizer().clone());
                 self.inference_engine = Some(engine);
+                self.local_active_requests = 0;
+                self.refresh_replica_views();
+                self.broadcast_replica_status();
             }
             Err(error) => {
                 self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
                 self.state.snapshot.inference.error = Some(error.clone());
                 self.state.snapshot.inference.status_line = "Model load failed".to_owned();
                 self.state.set_status(error);
+                self.refresh_replica_views();
             }
         }
     }
@@ -2362,8 +2470,17 @@ impl NodeRuntime {
         if let Some(cancel) = self.generation_cancel.take() {
             let _ = cancel.send(true);
         }
+        for serving in self.serving_remote_requests.values() {
+            let _ = serving.cancel.send(true);
+        }
+        self.serving_remote_requests.clear();
+        self.pending_remote_generation = None;
+        self.local_active_requests = 0;
+        self.local_generation_request_id = None;
         self.inference_engine = None;
         self.state.snapshot.inference = mesh_core::InferenceView::idle();
+        self.refresh_replica_views();
+        self.broadcast_replica_status();
         self.state.set_status("Unloaded model.");
     }
 
@@ -2374,17 +2491,9 @@ impl NodeRuntime {
         temperature: f32,
         seed: u64,
     ) {
-        if self.inference_engine.is_none() {
-            self.state.snapshot.inference.error = Some("Load a model before generating.".to_owned());
-            self.state.snapshot.inference.status_line = "No model loaded".to_owned();
+        if self.state.snapshot.inference.busy || self.pending_remote_generation.is_some() {
             return;
         }
-        if self.state.snapshot.inference.busy {
-            return;
-        }
-        let Some(mut engine) = self.inference_engine.take() else {
-            return;
-        };
         let params = SamplingParams {
             temperature,
             top_k: if temperature == 0.0 {
@@ -2401,25 +2510,154 @@ impl NodeRuntime {
             seed,
             max_new_tokens: max_new_tokens.max(1),
         };
+
+        self.refresh_replica_views();
+        let preferred_model = self
+            .inference_engine
+            .as_ref()
+            .map(|engine| engine.model_line.clone())
+            .or_else(|| self.state.snapshot.inference.model_line.clone());
+        let Some(route) = select_replica_route(
+            self.state.snapshot.inference.replicas.iter(),
+            preferred_model.as_deref(),
+        )
+        .cloned() else {
+            self.state.snapshot.inference.error =
+                Some("No ready replica with free capacity.".to_owned());
+            self.state.snapshot.inference.status_line = "No replica available".to_owned();
+            return;
+        };
+
+        if route.local {
+            self.spawn_local_generation(prompt, params);
+            return;
+        }
+
+        let Ok(peer_node_id) = NodeId::parse_hex(&route.node_id) else {
+            self.state.snapshot.inference.error = Some("Invalid replica node id.".to_owned());
+            return;
+        };
+        let Ok(deployment_id) = DeploymentId::parse_hex(&route.deployment_id) else {
+            self.state.snapshot.inference.error = Some("Invalid replica deployment id.".to_owned());
+            return;
+        };
+        let Some(session) = self.sessions.get(&peer_node_id) else {
+            self.state.snapshot.inference.error = Some("Replica peer is not connected.".to_owned());
+            return;
+        };
+
+        let Some(tokenizer) = self.coordinator_tokenizer.as_ref() else {
+            self.state.snapshot.inference.error = Some(
+                "Prepare/load a model once so this node can tokenize remote requests.".to_owned(),
+            );
+            self.state.snapshot.inference.status_line = "Local tokenizer required".to_owned();
+            return;
+        };
+        let token_ids = match tokenizer.encode_chat(None, &prompt) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error.to_string());
+                return;
+            }
+        };
+        let request_id = RequestId::new();
+        let request = InferenceRequestSpec {
+            deployment_id,
+            request_id,
+            input_token_ids: token_ids,
+            sampling: params,
+            stop_token_ids: Vec::new(),
+            return_logprobs: false,
+        };
+        if session
+            .commands
+            .try_send(SessionCommand::SendInferenceRequest { request })
+            .is_err()
+        {
+            self.state.snapshot.inference.error =
+                Some("Failed to send inference request to replica.".to_owned());
+            return;
+        }
+
+        self.pending_remote_generation = Some(PendingRemoteGeneration {
+            peer_node_id,
+            request_id,
+            deployment_id,
+            prompt: prompt.clone(),
+            token_ids: Vec::new(),
+        });
+        if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
+            peer.replica_active_requests = peer.replica_active_requests.saturating_add(1);
+            peer.replica_ready = peer.replica_active_requests < peer.replica_max_concurrent_requests;
+            self.state.rebuild_peer_summaries();
+        }
+        self.state.snapshot.inference.busy = true;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Generating);
+        self.state.snapshot.inference.prompt = prompt;
+        self.state.snapshot.inference.output_text.clear();
+        self.state.snapshot.inference.error = None;
+        self.state.snapshot.inference.stop_reason = None;
+        self.state.snapshot.inference.generated_tokens = 0;
+        self.state.snapshot.inference.last_token_id = None;
+        self.state.snapshot.inference.routed_node_id = Some(route.node_id);
+        self.state.snapshot.inference.model_line = Some(route.model_line);
+        self.state.snapshot.inference.backend = Some(route.backend);
+        self.state.snapshot.inference.deployment_id = Some(deployment_id.to_string());
+        self.state.snapshot.inference.status_line =
+            format!("Generating on remote replica {}…", route.display_name);
+        self.state
+            .set_status(format!("Routed generation to {}.", route.display_name));
+        self.refresh_replica_views();
+    }
+
+    fn spawn_local_generation(&mut self, prompt: String, params: SamplingParams) {
+        let max_concurrent = self
+            .inference_engine
+            .as_ref()
+            .map(|engine| engine.max_concurrent_requests())
+            .unwrap_or(1);
+        if self.local_active_requests >= max_concurrent {
+            self.state.snapshot.inference.error =
+                Some("Local replica has no free execution slots.".to_owned());
+            return;
+        }
+        let Some(mut engine) = self.inference_engine.take() else {
+            self.state.snapshot.inference.error = Some("Load a model before generating.".to_owned());
+            self.state.snapshot.inference.status_line = "No model loaded".to_owned();
+            return;
+        };
+        let request_id = RequestId::new();
+        let local_node = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id.to_string());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.generation_cancel = Some(cancel_tx);
+        self.local_generation_request_id = Some(request_id);
+        self.local_active_requests = self.local_active_requests.saturating_add(1);
         self.state.snapshot.inference.busy = true;
         self.state.snapshot.inference.phase = Some(InferencePhase::Generating);
         self.state.snapshot.inference.prompt = prompt.clone();
         self.state.snapshot.inference.output_text.clear();
         self.state.snapshot.inference.error = None;
         self.state.snapshot.inference.stop_reason = None;
-        self.state.snapshot.inference.status_line = "Generating…".to_owned();
+        self.state.snapshot.inference.routed_node_id = local_node;
+        self.state.snapshot.inference.status_line = "Generating on local replica…".to_owned();
         self.state.set_status("Generating tokens…");
+        self.refresh_replica_views();
+        self.broadcast_replica_status();
         let event_tx = self.event_tx.clone();
         tokio::task::spawn_blocking(move || {
             let result = engine
-                .generate(&prompt, params, || !*cancel_rx.borrow())
+                .generate_with_request(&prompt, params, request_id, |_| {}, || !*cancel_rx.borrow())
                 .map_err(|error| error.to_string());
             let _ = event_tx.blocking_send(RuntimeEvent::GenerationFinished {
                 prompt,
                 engine: Box::new(engine),
                 result,
+                request_id,
+                remote_owner: None,
             });
         });
     }
@@ -2428,17 +2666,96 @@ impl NodeRuntime {
         if let Some(cancel) = self.generation_cancel.take() {
             let _ = cancel.send(true);
         }
+        if let Some(pending) = self.pending_remote_generation.as_ref() {
+            if let Some(session) = self.sessions.get(&pending.peer_node_id) {
+                let _ = session.commands.try_send(SessionCommand::SendCancelRequest {
+                    deployment_id: pending.deployment_id,
+                    request_id: pending.request_id,
+                    reason: "cancelled by user".to_owned(),
+                });
+            }
+        }
         self.state.snapshot.inference.status_line = "Cancelling generation…".to_owned();
     }
 
-    fn on_generation_finished(
+    async fn on_generation_finished(
         &mut self,
         prompt: String,
         engine: Box<SingleNodeEngine>,
         result: Result<mesh_inference::GenerationOutput, String>,
+        request_id: RequestId,
+        remote_owner: Option<NodeId>,
     ) {
         self.generation_cancel = None;
+        self.local_generation_request_id = None;
+        self.local_active_requests = self.local_active_requests.saturating_sub(1);
+        self.serving_remote_requests.remove(&request_id);
         self.inference_engine = Some(*engine);
+
+        if let Some(owner) = remote_owner {
+            match &result {
+                Ok(output) => {
+                    if let Some(session) = self.sessions.get(&owner) {
+                        for event in &output.tokens {
+                            let _ = session
+                                .commands
+                                .try_send(SessionCommand::SendTokenResult { event: event.clone() });
+                        }
+                        if output.tokens.last().is_none_or(|event| !event.is_last) {
+                            let final_event = TokenResultEvent {
+                                deployment_id: self
+                                    .inference_engine
+                                    .as_ref()
+                                    .map(|engine| engine.deployment_id)
+                                    .unwrap_or_else(DeploymentId::new),
+                                request_id,
+                                token_id: output
+                                    .tokens
+                                    .last()
+                                    .map(|event| event.token_id)
+                                    .unwrap_or(0),
+                                token_index: output.tokens.len() as u32,
+                                is_last: true,
+                                stop_reason: Some(output.stop_reason),
+                                sequence_length: output
+                                    .tokens
+                                    .last()
+                                    .map(|event| event.sequence_length)
+                                    .unwrap_or(0),
+                            };
+                            let _ = session
+                                .commands
+                                .try_send(SessionCommand::SendTokenResult { event: final_event });
+                        }
+                    }
+                }
+                Err(error) => {
+                    warn!(%owner, %error, "remote generation failed");
+                    if let Some(session) = self.sessions.get(&owner) {
+                        let event = TokenResultEvent {
+                            deployment_id: self
+                                .inference_engine
+                                .as_ref()
+                                .map(|engine| engine.deployment_id)
+                                .unwrap_or_else(DeploymentId::new),
+                            request_id,
+                            token_id: 0,
+                            token_index: 0,
+                            is_last: true,
+                            stop_reason: Some(StopReason::Error),
+                            sequence_length: 0,
+                        };
+                        let _ = session
+                            .commands
+                            .try_send(SessionCommand::SendTokenResult { event });
+                    }
+                }
+            }
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
+            return;
+        }
+
         self.state.snapshot.inference.busy = false;
         self.state.snapshot.inference.prompt = prompt;
         match result {
@@ -2459,6 +2776,10 @@ impl NodeRuntime {
                     .inference_engine
                     .as_ref()
                     .map(|engine| engine.model_line.clone());
+                self.state.snapshot.inference.deployment_id = self
+                    .inference_engine
+                    .as_ref()
+                    .map(|engine| engine.deployment_id.to_string());
                 self.state.snapshot.inference.status_line = format!(
                     "Completed · {} tokens · {}",
                     output.tokens.len(),
@@ -2471,6 +2792,289 @@ impl NodeRuntime {
                 self.state.snapshot.inference.error = Some(error.clone());
                 self.state.snapshot.inference.status_line = "Generation failed".to_owned();
                 self.state.set_status(error);
+            }
+        }
+        self.refresh_replica_views();
+        self.broadcast_replica_status();
+    }
+
+    fn on_replica_status(&mut self, from_peer: NodeId, status: ReplicaStatusMessage) {
+        if let Some(peer) = self.state.peers.get_mut(&from_peer) {
+            peer.replica_model_line = Some(status.model_line);
+            peer.replica_backend = Some(status.backend);
+            peer.replica_ready = status.ready;
+            peer.replica_healthy = status.healthy;
+            peer.replica_active_requests = status.active_requests;
+            peer.replica_max_concurrent_requests = status.max_concurrent_requests.max(1);
+            peer.replica_deployment_id = Some(status.deployment_id.to_string());
+            self.state.rebuild_peer_summaries();
+        }
+        self.refresh_replica_views();
+    }
+
+    async fn on_remote_inference_request(
+        &mut self,
+        from_peer: NodeId,
+        request: InferenceRequestSpec,
+    ) {
+        let reject = |this: &mut Self, reason: String| {
+            if let Some(session) = this.sessions.get(&from_peer) {
+                let event = TokenResultEvent {
+                    deployment_id: request.deployment_id,
+                    request_id: request.request_id,
+                    token_id: 0,
+                    token_index: 0,
+                    is_last: true,
+                    stop_reason: Some(StopReason::Error),
+                    sequence_length: 0,
+                };
+                let _ = session
+                    .commands
+                    .try_send(SessionCommand::SendTokenResult { event });
+            }
+            warn!(%from_peer, %reason, "rejected remote inference request");
+        };
+
+        let Some(engine_ref) = self.inference_engine.as_ref() else {
+            reject(self, "no local model loaded".to_owned());
+            return;
+        };
+        if engine_ref.deployment_id != request.deployment_id {
+            reject(self, "deployment mismatch".to_owned());
+            return;
+        }
+        if self.local_active_requests >= engine_ref.max_concurrent_requests() {
+            reject(self, "no free local slots".to_owned());
+            return;
+        }
+        let Some(mut engine) = self.inference_engine.take() else {
+            reject(self, "engine unavailable".to_owned());
+            return;
+        };
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        self.serving_remote_requests.insert(
+            request.request_id,
+            ServingRemoteRequest {
+                owner_node_id: from_peer,
+                cancel: cancel_tx,
+            },
+        );
+        self.local_active_requests = self.local_active_requests.saturating_add(1);
+        self.refresh_replica_views();
+        self.broadcast_replica_status();
+        let event_tx = self.event_tx.clone();
+        let prompt = String::new();
+        tokio::task::spawn_blocking(move || {
+            let result = engine
+                .generate_from_tokens(
+                    &request.input_token_ids,
+                    request.sampling,
+                    &request.stop_token_ids,
+                    request.request_id,
+                    |_| {},
+                    || !*cancel_rx.borrow(),
+                )
+                .map_err(|error| error.to_string());
+            let _ = event_tx.blocking_send(RuntimeEvent::GenerationFinished {
+                prompt,
+                engine: Box::new(engine),
+                result,
+                request_id: request.request_id,
+                remote_owner: Some(from_peer),
+            });
+        });
+    }
+
+    fn on_remote_token(&mut self, event: TokenResultEvent) {
+        let Some(pending) = self.pending_remote_generation.as_mut() else {
+            return;
+        };
+        if pending.request_id != event.request_id {
+            return;
+        }
+        if event.token_id != 0 || !event.is_last {
+            pending.token_ids.push(event.token_id);
+            self.state.snapshot.inference.generated_tokens = pending.token_ids.len() as u32;
+            self.state.snapshot.inference.last_token_id = Some(event.token_id);
+        }
+        if let Some(tokenizer) = self.coordinator_tokenizer.as_ref() {
+            match tokenizer.decode_stream(&pending.token_ids) {
+                Ok(text) => self.state.snapshot.inference.output_text = text,
+                Err(error) => self.state.snapshot.inference.error = Some(error.to_string()),
+            }
+        }
+        if event.is_last {
+            let peer_node_id = pending.peer_node_id;
+            let prompt = pending.prompt.clone();
+            self.pending_remote_generation = None;
+            if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
+                peer.replica_active_requests = peer.replica_active_requests.saturating_sub(1);
+                peer.replica_ready = peer.replica_healthy
+                    && peer.replica_active_requests < peer.replica_max_concurrent_requests;
+                self.state.rebuild_peer_summaries();
+            }
+            self.state.snapshot.inference.busy = false;
+            self.state.snapshot.inference.prompt = prompt;
+            self.state.snapshot.inference.phase = Some(InferencePhase::Ready);
+            self.state.snapshot.inference.stop_reason = event
+                .stop_reason
+                .map(|reason| reason.as_str().to_owned())
+                .or_else(|| Some(StopReason::Eos.as_str().to_owned()));
+            if event.stop_reason == Some(StopReason::Error) {
+                self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+                if self.state.snapshot.inference.error.is_none() {
+                    self.state.snapshot.inference.error =
+                        Some("Remote replica reported generation error.".to_owned());
+                }
+                self.state.snapshot.inference.status_line = "Remote generation failed".to_owned();
+            } else {
+                self.state.snapshot.inference.status_line = format!(
+                    "Completed on remote · {} tokens · {}",
+                    self.state.snapshot.inference.generated_tokens,
+                    self.state
+                        .snapshot
+                        .inference
+                        .stop_reason
+                        .clone()
+                        .unwrap_or_else(|| "eos".to_owned())
+                );
+                self.state.set_status("Remote generation finished.");
+            }
+            self.refresh_replica_views();
+        }
+    }
+
+    fn local_replica_view(&self) -> Option<ReplicaEndpointView> {
+        let engine = self.inference_engine.as_ref()?;
+        let identity = self.state.identity.as_ref()?;
+        let max = engine.max_concurrent_requests();
+        let health = if self.local_active_requests >= max {
+            ReplicaHealth::Busy
+        } else {
+            ReplicaHealth::Ready
+        };
+        Some(ReplicaEndpointView {
+            node_id: identity.node_id.to_string(),
+            display_name: identity.display_name.clone(),
+            deployment_id: engine.deployment_id.to_string(),
+            model_line: engine.model_line.clone(),
+            backend: engine.backend.as_str().to_owned(),
+            ready: health == ReplicaHealth::Ready,
+            healthy: true,
+            active_requests: self.local_active_requests,
+            max_concurrent_requests: max,
+            health,
+            local: true,
+        })
+    }
+
+    fn refresh_replica_views(&mut self) {
+        let mut replicas = Vec::new();
+        if let Some(local) = self.local_replica_view() {
+            replicas.push(local);
+        }
+        for peer in self.state.peers.values() {
+            if !peer.connected {
+                continue;
+            }
+            let Some(model_line) = peer.replica_model_line.clone() else {
+                continue;
+            };
+            let Some(deployment_id) = peer.replica_deployment_id.clone() else {
+                continue;
+            };
+            let max = peer.replica_max_concurrent_requests.max(1);
+            let health = if !peer.replica_healthy {
+                ReplicaHealth::Unhealthy
+            } else if peer.replica_active_requests >= max || !peer.replica_ready {
+                ReplicaHealth::Busy
+            } else {
+                ReplicaHealth::Ready
+            };
+            replicas.push(ReplicaEndpointView {
+                node_id: peer.node_id.to_string(),
+                display_name: peer.display_name.clone(),
+                deployment_id,
+                model_line,
+                backend: peer
+                    .replica_backend
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+                ready: health == ReplicaHealth::Ready,
+                healthy: peer.replica_healthy,
+                active_requests: peer.replica_active_requests,
+                max_concurrent_requests: max,
+                health,
+                local: false,
+            });
+        }
+        replicas.sort_by(|left, right| {
+            left.display_name
+                .cmp(&right.display_name)
+                .then_with(|| left.node_id.cmp(&right.node_id))
+        });
+        self.state.snapshot.inference.replicas = replicas;
+    }
+
+    fn local_replica_status_message(&self) -> Option<ReplicaStatusMessage> {
+        let view = self.local_replica_view()?;
+        ReplicaStatusMessage::from_local_view(&view).ok()
+    }
+
+    fn broadcast_replica_status(&self) {
+        let Some(status) = self.local_replica_status_message() else {
+            return;
+        };
+        for session in self.sessions.values() {
+            let _ = session
+                .commands
+                .try_send(SessionCommand::SendReplicaStatus {
+                    status: status.clone(),
+                });
+        }
+    }
+
+    fn announce_replica_status_to(&self, peer_node_id: NodeId) {
+        let Some(status) = self.local_replica_status_message() else {
+            return;
+        };
+        if let Some(session) = self.sessions.get(&peer_node_id) {
+            let _ = session
+                .commands
+                .try_send(SessionCommand::SendReplicaStatus { status });
+        }
+    }
+
+    fn fail_pending_remote_for_peer(&mut self, peer_node_id: NodeId, message: String) {
+        let Some(pending) = self.pending_remote_generation.as_ref() else {
+            return;
+        };
+        if pending.peer_node_id != peer_node_id {
+            return;
+        }
+        self.pending_remote_generation = None;
+        self.state.snapshot.inference.busy = false;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+        self.state.snapshot.inference.error = Some(message);
+        self.state.snapshot.inference.status_line = "Remote replica disconnected".to_owned();
+        self.refresh_replica_views();
+    }
+
+    fn cancel_serving_for_peer(&mut self, peer_node_id: NodeId) {
+        let ids: Vec<_> = self
+            .serving_remote_requests
+            .iter()
+            .filter_map(|(id, serving)| {
+                if serving.owner_node_id == peer_node_id {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in ids {
+            if let Some(serving) = self.serving_remote_requests.remove(&id) {
+                let _ = serving.cancel.send(true);
             }
         }
     }
@@ -3220,6 +3824,216 @@ mod tests {
 
         handle.request_shutdown().ok();
         let _ = task.await;
+    }
+
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn p08_remote_replica_generate_smoke() {
+        if std::env::var_os("MESH_P08_SMOKE").is_none() {
+            eprintln!("skipping P08 remote replica smoke; set MESH_P08_SMOKE=1 to run");
+            return;
+        }
+
+        let cache_src = std::env::var_os("MESH_P07_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("mesh-p07-smoke")
+            });
+        assert!(
+            cache_src.join("model-cache").is_dir(),
+            "missing prepared cache at {}",
+            cache_src.display()
+        );
+
+        let root = std::env::temp_dir().join(format!("mesh-p08-{}", now_unix_ms()));
+        let worker_dir = root.join("worker");
+        let coord_dir = root.join("coord");
+        std::fs::create_dir_all(&worker_dir).expect("worker dir");
+        std::fs::create_dir_all(&coord_dir).expect("coord dir");
+        for dir in [&worker_dir, &coord_dir] {
+            let _ = std::os::unix::fs::symlink(
+                cache_src.join("model-cache"),
+                dir.join("model-cache"),
+            );
+            let _ = std::os::unix::fs::symlink(cache_src.join("cache"), dir.join("cache"));
+        }
+
+        let max_new_tokens = std::env::var("MESH_P08_MAX_NEW_TOKENS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(8)
+            .max(1);
+
+        let worker = NodeRuntime::create("P08 Worker", StorePaths::isolated(&worker_dir))
+            .expect("worker runtime");
+        let coord = NodeRuntime::create("P08 Coord", StorePaths::isolated(&coord_dir))
+            .expect("coord runtime");
+        let worker_handle = worker.handle();
+        let coord_handle = coord.handle();
+        let worker_task = tokio::spawn(worker.run());
+        let coord_task = tokio::spawn(coord.run());
+
+        wait_for(&worker_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+        })
+        .await;
+        worker_handle
+            .send(UiCommand::CreateMesh {
+                display_name: "P08 Worker".to_owned(),
+            })
+            .await
+            .expect("create mesh");
+        wait_for(&worker_handle, |snapshot| snapshot.phase == RuntimePhase::Ready).await;
+        worker_handle
+            .send(UiCommand::CreateInvitation)
+            .await
+            .expect("invite");
+        let invitation = wait_for(&worker_handle, |snapshot| {
+            snapshot.enrollment.invitation_text.is_some()
+        })
+        .await
+        .enrollment
+        .invitation_text
+        .expect("invitation");
+
+        wait_for(&coord_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+        })
+        .await;
+        coord_handle
+            .send(UiCommand::SubmitInvitation { text: invitation })
+            .await
+            .expect("join");
+        wait_for(&coord_handle, |snapshot| {
+            snapshot.phase == RuntimePhase::Ready && !snapshot.peers.is_empty()
+        })
+        .await;
+        wait_for(&worker_handle, |snapshot| !snapshot.peers.is_empty()).await;
+
+        for handle in [&worker_handle, &coord_handle] {
+            handle
+                .send(UiCommand::SelectModel {
+                    reference: ModelReference::qwen3_4b(),
+                })
+                .await
+                .expect("select");
+            handle
+                .send(UiCommand::RefreshProviderAccess)
+                .await
+                .expect("access");
+            wait_for_timeout(handle, Duration::from_secs(120), |snapshot| {
+                !snapshot.models.busy
+                    && snapshot.models.provider_access.status
+                        != mesh_core::ProviderAccessStatus::Unchecked
+            })
+            .await;
+            handle
+                .send(UiCommand::ProbeSelectedModel)
+                .await
+                .expect("probe");
+            wait_for_timeout(handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.models.busy && snapshot.models.resolved_identity.is_some()
+            })
+            .await;
+            handle
+                .send(UiCommand::PrepareSelectedModel)
+                .await
+                .expect("prepare");
+            wait_for_timeout(handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.models.busy && snapshot.models.last_prepare_summary.is_some()
+            })
+            .await;
+        }
+
+        worker_handle
+            .send(UiCommand::LoadSelectedModel)
+            .await
+            .expect("worker load");
+        let worker_ready = wait_for_timeout(&worker_handle, Duration::from_secs(60 * 60), |snapshot| {
+            !snapshot.inference.busy
+                && (snapshot.inference.phase == Some(InferencePhase::Ready)
+                    || snapshot.inference.phase == Some(InferencePhase::Failed)
+                    || snapshot.inference.error.is_some())
+        })
+        .await;
+        assert!(
+            worker_ready.inference.error.is_none(),
+            "worker load failed: {:?}",
+            worker_ready.inference.error
+        );
+        assert_eq!(worker_ready.inference.phase, Some(InferencePhase::Ready));
+
+        let replica_seen = wait_for_timeout(&coord_handle, Duration::from_secs(60), |snapshot| {
+            snapshot.inference.replicas.iter().any(|replica| {
+                !replica.local && replica.can_accept() && replica.model_line.contains("Qwen3-4B")
+            })
+        })
+        .await;
+        eprintln!(
+            "P08 coord replicas={:?}",
+            replica_seen
+                .inference
+                .replicas
+                .iter()
+                .map(|item| item.status_line())
+                .collect::<Vec<_>>()
+        );
+
+        coord_handle
+            .send(UiCommand::Generate {
+                prompt: "Say hello in one short word.".to_owned(),
+                max_new_tokens,
+                temperature: 0.0,
+                seed: 7,
+            })
+            .await
+            .expect("generate");
+        let generated = wait_for_timeout(&coord_handle, Duration::from_secs(2 * 60 * 60), |snapshot| {
+            !snapshot.inference.busy
+                && (snapshot.inference.generated_tokens > 0
+                    || snapshot.inference.phase == Some(InferencePhase::Failed)
+                    || snapshot.inference.error.is_some())
+        })
+        .await;
+        assert!(
+            generated.inference.error.is_none(),
+            "remote generation failed: {:?}",
+            generated.inference.error
+        );
+        assert!(
+            generated.inference.generated_tokens > 0,
+            "expected remote tokens: {:?}",
+            generated.inference
+        );
+        assert!(
+            generated
+                .inference
+                .routed_node_id
+                .as_ref()
+                .is_some_and(|id| !id.is_empty()),
+            "expected routed_node_id"
+        );
+        assert!(
+            !generated.inference.output_text.trim().is_empty(),
+            "empty remote output"
+        );
+        eprintln!(
+            "P08 remote generate routed={:?} backend={:?} tokens={} stop={:?} output={:?}",
+            generated.inference.routed_node_id,
+            generated.inference.backend,
+            generated.inference.generated_tokens,
+            generated.inference.stop_reason,
+            generated.inference.output_text
+        );
+
+        worker_handle.request_shutdown().ok();
+        coord_handle.request_shutdown().ok();
+        let _ = worker_task.await;
+        let _ = coord_task.await;
+        let _ = std::fs::remove_dir_all(&root);
     }
 
 

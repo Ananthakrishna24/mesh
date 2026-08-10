@@ -31,6 +31,17 @@ impl StopReason {
             Self::Error => "error",
         }
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "eos" => Some(Self::Eos),
+            "max_new_tokens" => Some(Self::MaxNewTokens),
+            "context_limit" => Some(Self::ContextLimit),
+            "cancelled" => Some(Self::Cancelled),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +167,8 @@ pub struct InferenceView {
     pub generated_tokens: u32,
     pub stop_reason: Option<String>,
     pub last_token_id: Option<u32>,
+    pub routed_node_id: Option<String>,
+    pub replicas: Vec<ReplicaEndpointView>,
 }
 
 impl InferenceView {
@@ -166,6 +179,101 @@ impl InferenceView {
             ..Self::default()
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReplicaHealth {
+    Ready,
+    Busy,
+    Unhealthy,
+    Offline,
+}
+
+impl ReplicaHealth {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Busy => "busy",
+            Self::Unhealthy => "unhealthy",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplicaEndpointView {
+    pub node_id: String,
+    pub display_name: String,
+    pub deployment_id: String,
+    pub model_line: String,
+    pub backend: String,
+    pub ready: bool,
+    pub healthy: bool,
+    pub active_requests: u32,
+    pub max_concurrent_requests: u32,
+    pub health: ReplicaHealth,
+    pub local: bool,
+}
+
+impl ReplicaEndpointView {
+    pub fn free_slots(&self) -> u32 {
+        self.max_concurrent_requests
+            .saturating_sub(self.active_requests)
+    }
+
+    pub fn can_accept(&self) -> bool {
+        self.ready && self.healthy && self.free_slots() > 0
+    }
+
+    pub fn status_line(&self) -> String {
+        format!(
+            "{} · {} · {}/{}/{} · {}",
+            self.display_name,
+            self.backend,
+            self.active_requests,
+            self.max_concurrent_requests,
+            if self.local { "local" } else { "remote" },
+            self.health.as_str()
+        )
+    }
+}
+
+pub fn select_replica_route<'a>(
+    replicas: impl IntoIterator<Item = &'a ReplicaEndpointView>,
+    model_line: Option<&str>,
+) -> Option<&'a ReplicaEndpointView> {
+    let mut best: Option<&ReplicaEndpointView> = None;
+    for replica in replicas {
+        if !replica.can_accept() {
+            continue;
+        }
+        if let Some(model_line) = model_line {
+            if replica.model_line != model_line {
+                continue;
+            }
+        }
+        best = Some(match best {
+            None => replica,
+            Some(current) => {
+                let left = (
+                    current.active_requests,
+                    u8::from(!current.local),
+                    current.node_id.as_str(),
+                );
+                let right = (
+                    replica.active_requests,
+                    u8::from(!replica.local),
+                    replica.node_id.as_str(),
+                );
+                if right < left {
+                    replica
+                } else {
+                    current
+                }
+            }
+        });
+    }
+    best
 }
 
 pub fn per_layer_kv_bytes(
@@ -234,4 +342,55 @@ mod tests {
         assert!(params.validate(4000, 4096, 151936).is_err());
         assert!(params.validate(10, 4096, 151936).is_ok());
     }
+
+    #[test]
+    fn select_replica_route_prefers_least_loaded_local() {
+        let local_busy = ReplicaEndpointView {
+            node_id: "aa".into(),
+            display_name: "Local".into(),
+            deployment_id: "d1".into(),
+            model_line: "Qwen/Qwen3-4B".into(),
+            backend: "cuda".into(),
+            ready: true,
+            healthy: true,
+            active_requests: 1,
+            max_concurrent_requests: 1,
+            health: ReplicaHealth::Busy,
+            local: true,
+        };
+        let remote_ready = ReplicaEndpointView {
+            node_id: "bb".into(),
+            display_name: "Remote".into(),
+            deployment_id: "d2".into(),
+            model_line: "Qwen/Qwen3-4B".into(),
+            backend: "cuda".into(),
+            ready: true,
+            healthy: true,
+            active_requests: 0,
+            max_concurrent_requests: 1,
+            health: ReplicaHealth::Ready,
+            local: false,
+        };
+        let local_ready = ReplicaEndpointView {
+            node_id: "cc".into(),
+            display_name: "LocalReady".into(),
+            deployment_id: "d3".into(),
+            model_line: "Qwen/Qwen3-4B".into(),
+            backend: "cpu".into(),
+            ready: true,
+            healthy: true,
+            active_requests: 0,
+            max_concurrent_requests: 1,
+            health: ReplicaHealth::Ready,
+            local: true,
+        };
+        let chosen = select_replica_route(
+            [&local_busy, &remote_ready, &local_ready],
+            Some("Qwen/Qwen3-4B"),
+        )
+        .expect("route");
+        assert_eq!(chosen.node_id, "cc");
+        assert!(chosen.local);
+    }
+
 }

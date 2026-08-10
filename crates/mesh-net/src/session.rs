@@ -4,10 +4,11 @@ use mesh_core::protocol::proto::{
     IntroductionReady, PeerObserve, PeerRecord as ProtoPeer, PeerUpdate, control_envelope::Body,
 };
 use mesh_core::{
-    BandwidthMeasurement, CapabilityReport, DelayMeasurement, EndpointCandidate, LinkMeasurement,
-    LocalIdentity, NodeId, PeerRecord, ReservationCommit, ReservationRelease, ReserveAccepted,
-    ReserveRejected, ReserveRequest, ResourceOffer, ResourceQuery, now_unix_ms, random_message_id,
-    PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    BandwidthMeasurement, CapabilityReport, DelayMeasurement, DeploymentId, EndpointCandidate,
+    InferenceRequestSpec, LinkMeasurement, LocalIdentity, NodeId, PeerRecord, RequestId,
+    ReservationCommit, ReservationRelease, ReserveAccepted, ReserveRejected, ReserveRequest,
+    ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms, random_message_id, PROTOCOL_MAJOR,
+    PROTOCOL_MINOR,
 };
 use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use quinn::{Connection, RecvStream, SendStream};
@@ -22,6 +23,11 @@ use crate::benchmark::{
 use crate::frame::{read_envelope, write_envelope};
 use crate::holepunch::{
     build_introduction_offer, build_introduction_ready, parse_socket_addr, peer_observed_candidate,
+};
+use crate::inference::{
+    ReplicaStatusMessage, build_cancel_request_envelope, build_inference_request_envelope,
+    build_replica_status_envelope, build_token_result_envelope, cancel_request_from_proto,
+    inference_request_from_proto, replica_status_from_proto, token_result_from_proto,
 };
 use crate::reservation::{
     build_reservation_commit_envelope, build_reservation_release_envelope,
@@ -98,6 +104,24 @@ pub enum SessionEvent {
         from_peer: NodeId,
         release: ReservationRelease,
     },
+    ReplicaStatus {
+        from_peer: NodeId,
+        status: ReplicaStatusMessage,
+    },
+    InferenceRequest {
+        from_peer: NodeId,
+        request: InferenceRequestSpec,
+    },
+    TokenResult {
+        from_peer: NodeId,
+        event: TokenResultEvent,
+    },
+    CancelRequest {
+        from_peer: NodeId,
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        reason: String,
+    },
     Failed {
         peer_node_id: NodeId,
         message: String,
@@ -136,6 +160,14 @@ pub enum SessionCommand {
     },
     SendReservationCommit { commit: ReservationCommit },
     SendReservationRelease { release: ReservationRelease },
+    SendReplicaStatus { status: ReplicaStatusMessage },
+    SendInferenceRequest { request: InferenceRequestSpec },
+    SendTokenResult { event: TokenResultEvent },
+    SendCancelRequest {
+        deployment_id: DeploymentId,
+        request_id: RequestId,
+        reason: String,
+    },
 }
 
 pub async fn run_connected_session(
@@ -371,6 +403,27 @@ async fn handle_session_command(
             let envelope = build_reservation_release_envelope(identity, &release);
             write_envelope(send, &envelope).await
         }
+        SessionCommand::SendReplicaStatus { status } => {
+            let envelope = build_replica_status_envelope(identity, &status);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendInferenceRequest { request } => {
+            let envelope = build_inference_request_envelope(identity, &request);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendTokenResult { event } => {
+            let envelope = build_token_result_envelope(identity, &event);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendCancelRequest {
+            deployment_id,
+            request_id,
+            reason,
+        } => {
+            let envelope =
+                build_cancel_request_envelope(identity, deployment_id, request_id, reason);
+            write_envelope(send, &envelope).await
+        }
     }
 }
 
@@ -539,6 +592,48 @@ async fn handle_peer_message(
                 .send(SessionEvent::ReservationRelease {
                     from_peer: peer_node_id,
                     release,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReplicaStatus(status)) => {
+            let status = replica_status_from_proto(status)?;
+            let _ = events
+                .send(SessionEvent::ReplicaStatus {
+                    from_peer: peer_node_id,
+                    status,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::InferenceRequest(request)) => {
+            let request = inference_request_from_proto(request)?;
+            let _ = events
+                .send(SessionEvent::InferenceRequest {
+                    from_peer: peer_node_id,
+                    request,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::TokenResult(result)) => {
+            let event = token_result_from_proto(result)?;
+            let _ = events
+                .send(SessionEvent::TokenResult {
+                    from_peer: peer_node_id,
+                    event,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::CancelRequest(cancel)) => {
+            let (deployment_id, request_id, reason) = cancel_request_from_proto(cancel)?;
+            let _ = events
+                .send(SessionEvent::CancelRequest {
+                    from_peer: peer_node_id,
+                    deployment_id,
+                    request_id,
+                    reason,
                 })
                 .await;
             Ok(())

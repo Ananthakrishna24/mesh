@@ -36,6 +36,7 @@ message ControlEnvelope {
     InferenceRequest inference_request = 40;
     TokenResult token_result = 41;
     CancelRequest cancel_request = 42;
+    ReplicaStatus replica_status = 43;
 
     IntroductionOffer introduction_offer = 50;
     IntroductionReady introduction_ready = 51;
@@ -345,4 +346,14 @@ message CancelRequest {
   bytes deployment_id = 1;
   bytes request_id = 2;
   string reason = 3;
+}
+
+message ReplicaStatus {
+  bytes deployment_id = 1;
+  string model_line = 2;
+  string backend = 3;
+  bool ready = 4;
+  bool healthy = 5;
+  uint32 active_requests = 6;
+  uint32 max_concurrent_requests = 7;
 }

@@ -12,6 +12,7 @@ pub enum TokenizerError {
     Io(#[from] std::io::Error),
 }
 
+#[derive(Clone)]
 pub struct MeshTokenizer {
     tokenizer: Tokenizer,
     pub tokenizer_hash: String,

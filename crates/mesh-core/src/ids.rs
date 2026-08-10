@@ -220,6 +220,12 @@ impl DeploymentId {
         Ok(Self(array))
     }
 
+    pub fn parse_hex(value: &str) -> CoreResult<Self> {
+        let bytes = hex::decode(value)
+            .map_err(|_| CoreError::InvalidDeploymentId(value.to_owned()))?;
+        Self::from_slice(&bytes)
+    }
+
     pub fn short_hex(self) -> String {
         hex::encode(&self.0[..4])
     }

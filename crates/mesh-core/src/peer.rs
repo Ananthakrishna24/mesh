@@ -157,6 +157,13 @@ pub struct PeerSummary {
     pub address: Option<SocketAddr>,
     pub hardware_line: Option<String>,
     pub link: Option<LinkMeasurement>,
+    pub replica_model_line: Option<String>,
+    pub replica_backend: Option<String>,
+    pub replica_ready: bool,
+    pub replica_healthy: bool,
+    pub replica_active_requests: u32,
+    pub replica_max_concurrent_requests: u32,
+    pub replica_deployment_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

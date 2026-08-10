@@ -55,9 +55,9 @@ pub use model::{
 pub use inference::{
     DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
     DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
-    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, SamplingParams, StopReason,
-    TokenResultEvent, WARMUP_MAX_NEW_TOKENS, per_layer_kv_bytes, request_stage_kv_bytes,
-    stage_kv_reserve_bytes,
+    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, ReplicaEndpointView, ReplicaHealth,
+    SamplingParams, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS, per_layer_kv_bytes,
+    request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
 };
 
 pub use ui::{

@@ -117,6 +117,14 @@ impl SingleNodeEngine {
         self.reservation_memory_bytes
     }
 
+    pub fn tokenizer(&self) -> &MeshTokenizer {
+        &self.tokenizer
+    }
+
+    pub fn max_concurrent_requests(&self) -> u32 {
+        FIRST_MAX_CONCURRENT_REQUESTS
+    }
+
     pub fn view(&self, prompt: &str, output: &str, error: Option<String>) -> InferenceView {
         InferenceView {
             phase: Some(self.phase),
@@ -143,6 +151,8 @@ impl SingleNodeEngine {
             generated_tokens: 0,
             stop_reason: None,
             last_token_id: None,
+            routed_node_id: None,
+            replicas: Vec::new(),
         }
     }
 
@@ -153,7 +163,7 @@ impl SingleNodeEngine {
             .encode_chat(None, "ping")
             .map_err(EngineError::from)?;
         let params = SamplingParams::warmup(0);
-        let _ = self.generate_tokens(&tokens, params, &[], || true)?;
+        let _ = self.generate_tokens(&tokens, params, &[], RequestId::new(), |_| {}, || true)?;
         self.model.clear_kv_cache();
         self.phase = InferencePhase::Ready;
         Ok(())
@@ -165,12 +175,56 @@ impl SingleNodeEngine {
         params: SamplingParams,
         should_continue: impl FnMut() -> bool,
     ) -> Result<GenerationOutput, EngineError> {
+        self.generate_with_request(prompt, params, RequestId::new(), |_| {}, should_continue)
+    }
+
+    pub fn generate_with_request(
+        &mut self,
+        prompt: &str,
+        params: SamplingParams,
+        request_id: RequestId,
+        on_token: impl FnMut(&TokenResultEvent),
+        should_continue: impl FnMut() -> bool,
+    ) -> Result<GenerationOutput, EngineError> {
         self.phase = InferencePhase::Generating;
         let token_ids = self
             .tokenizer
             .encode_chat(None, prompt)
             .map_err(EngineError::from)?;
-        let output = self.generate_tokens(&token_ids, params, &[], should_continue);
+        let output = self.generate_tokens(
+            &token_ids,
+            params,
+            &[],
+            request_id,
+            on_token,
+            should_continue,
+        );
+        self.model.clear_kv_cache();
+        match &output {
+            Ok(_) => self.phase = InferencePhase::Ready,
+            Err(_) => self.phase = InferencePhase::Failed,
+        }
+        output
+    }
+
+    pub fn generate_from_tokens(
+        &mut self,
+        prompt_token_ids: &[u32],
+        params: SamplingParams,
+        stop_token_ids: &[u32],
+        request_id: RequestId,
+        on_token: impl FnMut(&TokenResultEvent),
+        should_continue: impl FnMut() -> bool,
+    ) -> Result<GenerationOutput, EngineError> {
+        self.phase = InferencePhase::Generating;
+        let output = self.generate_tokens(
+            prompt_token_ids,
+            params,
+            stop_token_ids,
+            request_id,
+            on_token,
+            should_continue,
+        );
         self.model.clear_kv_cache();
         match &output {
             Ok(_) => self.phase = InferencePhase::Ready,
@@ -184,6 +238,8 @@ impl SingleNodeEngine {
         prompt_token_ids: &[u32],
         params: SamplingParams,
         stop_token_ids: &[u32],
+        request_id: RequestId,
+        mut on_token: impl FnMut(&TokenResultEvent),
         mut should_continue: impl FnMut() -> bool,
     ) -> Result<GenerationOutput, EngineError> {
         let mut sampler = Sampler::new(
@@ -202,7 +258,6 @@ impl SingleNodeEngine {
         let mut events: Vec<TokenResultEvent> = Vec::new();
         let mut generated_ids = Vec::new();
         let stop_reason;
-        let request_id = RequestId::new();
 
         loop {
             if !should_continue() {
@@ -210,6 +265,7 @@ impl SingleNodeEngine {
                 if let Some(last) = events.last_mut() {
                     last.is_last = true;
                     last.stop_reason = Some(StopReason::Cancelled);
+                    on_token(last);
                 }
                 break;
             }
@@ -225,6 +281,7 @@ impl SingleNodeEngine {
                 sequence_length: outcome.sequence_length,
             };
             generated_ids.push(outcome.token_id);
+            on_token(&event);
             events.push(event);
             if outcome.is_last {
                 stop_reason = outcome.stop_reason.unwrap_or(StopReason::Error);
@@ -246,6 +303,26 @@ impl SingleNodeEngine {
             stop_reason,
         })
     }
+}
+
+pub fn load_mesh_tokenizer(
+    cache_root: &Path,
+    resolved: &ResolvedModel,
+    hf_tokenizer_path: Option<&Path>,
+) -> Result<MeshTokenizer, EngineError> {
+    let tokenizer_path = locate_sidecar(
+        cache_root,
+        hf_tokenizer_path.and_then(|path| path.parent()),
+        &resolved.identity.repository,
+        &resolved.identity.revision,
+        "tokenizer.json",
+    )?;
+    MeshTokenizer::load(
+        &tokenizer_path,
+        &resolved.identity.tokenizer_hash,
+        QWEN3_EOS_TOKEN_ID,
+    )
+    .map_err(EngineError::from)
 }
 
 fn locate_sidecar(

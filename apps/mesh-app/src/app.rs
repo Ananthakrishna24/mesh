@@ -635,9 +635,21 @@ impl MeshApp {
                 "Backend",
                 inference.backend.as_deref().unwrap_or("—"),
             );
+            kv(
+                ui,
+                "Routed to",
+                inference.routed_node_id.as_deref().unwrap_or("—"),
+            );
             kv(ui, "Status", &inference.status_line);
             if let Some(error) = &inference.error {
                 ui.colored_label(Color32::from_rgb(180, 60, 60), error);
+            }
+            if !inference.replicas.is_empty() {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Replicas").strong());
+                for replica in &inference.replicas {
+                    ui.label(RichText::new(replica.status_line()).weak());
+                }
             }
             if !inference.output_text.is_empty() {
                 ui.add_space(6.0);
@@ -689,11 +701,11 @@ impl MeshApp {
                 ui.label("seed");
                 ui.add(egui::DragValue::new(&mut self.seed));
             });
+            let can_generate = !inference.busy
+                && (inference.model_line.is_some()
+                    || inference.replicas.iter().any(|replica| replica.can_accept()));
             if ui
-                .add_enabled(
-                    !inference.busy && inference.model_line.is_some(),
-                    egui::Button::new("Generate"),
-                )
+                .add_enabled(can_generate, egui::Button::new("Generate"))
                 .clicked()
             {
                 self.send(UiCommand::Generate {
@@ -733,6 +745,20 @@ impl MeshApp {
                             .map(|score| score.to_string())
                             .unwrap_or_else(|| "unavailable".to_owned()),
                     );
+                    if let Some(model) = &peer.replica_model_line {
+                        kv(
+                            ui,
+                            "Replica",
+                            &format!(
+                                "{} · {} · {}/{} · {}",
+                                model,
+                                peer.replica_backend.as_deref().unwrap_or("?"),
+                                peer.replica_active_requests,
+                                peer.replica_max_concurrent_requests.max(1),
+                                if peer.replica_ready { "ready" } else { "busy" }
+                            ),
+                        );
+                    }
                     ui.add_space(10.0);
                 }
             }
