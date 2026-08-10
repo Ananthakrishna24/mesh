@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
-use mesh_compute::{group_complete_weight_files, Qwen3Stage, WeightFile};
+use mesh_compute::{Qwen3Stage, WeightFile};
 use mesh_core::{
     stage_kv_reserve_bytes, ActivationHeader, DeploymentId, LayerRange, PlacementPlan, RequestId,
     SamplingParams, StageRole, StopReason, TokenResultEvent, TransferKind, FIRST_CONTEXT_LIMIT,
     FIRST_MAX_CONCURRENT_REQUESTS, ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST,
 };
-use mesh_model::{PrepareResult, ResolvedModel};
+use mesh_model::{materialize_stage_weight_files, PrepareResult, ResolvedModel};
 use thiserror::Error;
 
 use crate::engine::locate_sidecar;
@@ -26,6 +26,8 @@ pub enum PipelineError {
     Engine(#[from] EngineError),
     #[error(transparent)]
     Compute(#[from] mesh_compute::ComputeError),
+    #[error(transparent)]
+    Model(#[from] mesh_model::ModelError),
 }
 
 #[derive(Debug, Clone)]
@@ -114,19 +116,14 @@ impl StageWorker {
         prefer_cuda: bool,
         hf_tokenizer_path: Option<&Path>,
     ) -> Result<Self, PipelineError> {
-        let prepared_files = prepared
-            .prepared
-            .iter()
-            .map(|item| {
-                (
-                    item.artifact_path.clone(),
-                    item.relative_path.clone(),
-                    item.range_start,
-                    item.range_end,
-                )
+        let weight_paths = materialize_stage_weight_files(cache_root, prepared)?;
+        let weight_files = weight_paths
+            .into_iter()
+            .map(|(artifact_path, absolute_path)| WeightFile {
+                artifact_path,
+                absolute_path,
             })
             .collect::<Vec<_>>();
-        let weight_files = group_complete_weight_files(cache_root, &prepared_files)?;
         let config_path = locate_sidecar(
             cache_root,
             hf_tokenizer_path.and_then(Path::parent),
@@ -411,19 +408,14 @@ impl PipelineEngine {
             ));
         }
 
-        let prepared_files = prepared
-            .prepared
-            .iter()
-            .map(|item| {
-                (
-                    item.artifact_path.clone(),
-                    item.relative_path.clone(),
-                    item.range_start,
-                    item.range_end,
-                )
+        let weight_paths = materialize_stage_weight_files(cache_root, prepared)?;
+        let weight_files = weight_paths
+            .into_iter()
+            .map(|(artifact_path, absolute_path)| WeightFile {
+                artifact_path,
+                absolute_path,
             })
             .collect::<Vec<_>>();
-        let weight_files = group_complete_weight_files(cache_root, &prepared_files)?;
         let config_path = locate_sidecar(
             cache_root,
             hf_tokenizer_path.and_then(Path::parent),

@@ -30,7 +30,7 @@ use mesh_inference::{
 };
 use mesh_model::{
     DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
-    build_complete_plan, cleanup_incomplete, prepare_plan,
+    build_complete_plan, build_stage_plan, cleanup_incomplete, prepare_plan,
 };
 use mesh_net::{
     ActivationFrame, EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint,
@@ -347,7 +347,7 @@ enum RuntimeEvent {
     ModelPrepared(Result<PrepareResult, String>),
     ModelProgress(ModelDownloadProgress),
     ModelLoaded(Result<Box<SingleNodeEngine>, String>),
-    PipelineStageLoaded(Result<Box<LocalPipelineStage>, String>),
+    PipelineStageLoaded(Result<(Box<LocalPipelineStage>, PrepareResult), String>),
     GenerationFinished {
         prompt: String,
         engine: Box<SingleNodeEngine>,
@@ -3049,12 +3049,7 @@ impl NodeRuntime {
                 Some("Probe/resolve the model before pipeline load.".to_owned());
             return;
         };
-        let Some(prepared) = self.last_prepare.clone() else {
-            self.state.snapshot.inference.error =
-                Some("Prepare downloads before pipeline load.".to_owned());
-            return;
-        };
-        if self.state.snapshot.inference.busy {
+        if self.state.snapshot.inference.busy || self.state.snapshot.models.busy {
             return;
         }
         let Ok(deployment_id) = DeploymentId::parse_hex(&deployment_id) else {
@@ -3072,42 +3067,10 @@ impl NodeRuntime {
                 }
             }
         }
-        let layer_range = match LayerRange::new(layer_start, layer_end) {
-            Ok(range) => range,
-            Err(error) => {
-                self.state.snapshot.inference.error = Some(error);
-                return;
-            }
-        };
-        let stages = parsed_nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node_id)| {
-                let expected_role = if parsed_nodes.len() == 1 {
-                    StageRole::Complete
-                } else if index == 0 {
-                    StageRole::First
-                } else if index + 1 == parsed_nodes.len() {
-                    StageRole::Final
-                } else {
-                    StageRole::Middle
-                };
-                let range = if index as u16 == stage_index {
-                    layer_range
-                } else {
-                    // placeholder ranges filled only for validation of local assignment shape;
-                    // full plan is rebuilt via split_even below.
-                    LayerRange::new(0, 1).unwrap_or(layer_range)
-                };
-                StageAssignment {
-                    stage_index: index as u16,
-                    role: expected_role,
-                    node_id: *node_id,
-                    layer_range: range,
-                }
-            })
-            .collect::<Vec<_>>();
-        let _ = stages;
+        if let Err(error) = LayerRange::new(layer_start, layer_end) {
+            self.state.snapshot.inference.error = Some(error);
+            return;
+        }
         let placement = match PlacementPlan::split_even(
             deployment_id,
             model_line.clone(),
@@ -3146,45 +3109,135 @@ impl NodeRuntime {
             return;
         }
 
+        let plan = match build_stage_plan(
+            deployment_id.to_string(),
+            &resolved,
+            assignment.role,
+            assignment.layer_range,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error.to_string());
+                return;
+            }
+        };
+        let provider = match self.build_provider() {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.state.snapshot.inference.error = Some(error);
+                return;
+            }
+        };
+        let existing = self.store.list_model_cache_entries().unwrap_or_default();
         let cache_root = self.paths.model_cache_dir.clone();
         let event_tx = self.event_tx.clone();
         self.state.snapshot.inference.busy = true;
+        self.state.snapshot.models.busy = true;
         self.state.snapshot.inference.phase = Some(InferencePhase::Loading);
         self.state.snapshot.inference.error = None;
+        self.state.snapshot.models.error = None;
+        self.state.snapshot.models.progress = None;
         self.state.snapshot.inference.status_line = format!(
-            "Loading pipeline stage {} ({})…",
+            "Preparing pipeline stage {} ({}, layers {}..{}, {} bytes)…",
             assignment.stage_index,
-            assignment.role.as_str()
+            assignment.role.as_str(),
+            assignment.layer_range.start,
+            assignment.layer_range.end,
+            plan.disk_bytes_required
         );
-        self.state.set_status("Loading pipeline stage…");
-        tokio::task::spawn_blocking(move || {
-            let result = StageWorker::load_from_prepared(
-                assignment.stage_index,
-                assignment.role,
-                assignment.layer_range,
+        self.state.snapshot.models.status_line = self.state.snapshot.inference.status_line.clone();
+        self.state.set_status("Preparing assigned stage tensors…");
+
+        struct ChannelProgress {
+            tx: mpsc::Sender<RuntimeEvent>,
+        }
+        impl ProgressSink for ChannelProgress {
+            fn on_progress(&mut self, event: DownloadProgressEvent) {
+                let _ = self.tx.try_send(RuntimeEvent::ModelProgress(event.progress));
+            }
+        }
+
+        tokio::spawn(async move {
+            let mut progress = ChannelProgress {
+                tx: event_tx.clone(),
+            };
+            let prepared = match prepare_plan(
+                &provider,
                 &resolved,
-                &prepared,
+                &plan,
                 &cache_root,
-                true,
-                None,
+                &existing,
+                &mut progress,
             )
-            .map(|worker| {
-                Box::new(LocalPipelineStage {
-                    placement,
-                    assignment,
-                    worker,
-                    model_line,
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let _ = event_tx
+                        .send(RuntimeEvent::PipelineStageLoaded(Err(error.to_string())))
+                        .await;
+                    return;
+                }
+            };
+
+            let load_tx = event_tx.clone();
+            let prepared_for_load = prepared.clone();
+            let load_result = tokio::task::spawn_blocking(move || {
+                StageWorker::load_from_prepared(
+                    assignment.stage_index,
+                    assignment.role,
+                    assignment.layer_range,
+                    &resolved,
+                    &prepared_for_load,
+                    &cache_root,
+                    true,
+                    None,
+                )
+                .map(|worker| {
+                    (
+                        Box::new(LocalPipelineStage {
+                            placement,
+                            assignment,
+                            worker,
+                            model_line,
+                        }),
+                        prepared_for_load,
+                    )
                 })
+                .map_err(|error| error.to_string())
             })
-            .map_err(|error| error.to_string());
-            let _ = event_tx.blocking_send(RuntimeEvent::PipelineStageLoaded(result));
+            .await;
+            let result = match load_result {
+                Ok(result) => result,
+                Err(error) => Err(format!("pipeline stage load join failed: {error}")),
+            };
+            let _ = load_tx
+                .send(RuntimeEvent::PipelineStageLoaded(result))
+                .await;
         });
     }
 
-    fn on_pipeline_stage_loaded(&mut self, result: Result<Box<LocalPipelineStage>, String>) {
+    fn on_pipeline_stage_loaded(
+        &mut self,
+        result: Result<(Box<LocalPipelineStage>, PrepareResult), String>,
+    ) {
         self.state.snapshot.inference.busy = false;
+        self.state.snapshot.models.busy = false;
+        self.state.snapshot.models.progress = None;
         match result {
-            Ok(stage) => {
+            Ok((stage, prepared)) => {
+                for entry in &prepared.cache_entries {
+                    if let Err(error) = self.store.upsert_model_cache_entry(entry) {
+                        warn!(%error, "failed to persist stage cache entry");
+                    }
+                }
+                self.refresh_model_cache_view();
+                self.state.snapshot.models.resolved_identity = Some(prepared.identity.clone());
+                self.state.snapshot.models.last_prepare_summary = Some(prepared.summary.clone());
+                self.state.snapshot.models.error = None;
+                self.state.snapshot.models.status_line = prepared.summary.clone();
+                self.last_prepare = Some(prepared);
+
                 self.inference_engine = None;
                 self.pipeline_requests.clear();
                 self.ensure_coordinator_tokenizer();
@@ -3196,9 +3249,11 @@ impl NodeRuntime {
                 self.state.snapshot.inference.backend =
                     Some(stage.worker.backend().as_str().to_owned());
                 self.state.snapshot.inference.status_line = format!(
-                    "Pipeline stage {} ready ({}) on {}",
+                    "Pipeline stage {} ready ({}, layers {}..{}) on {}",
                     stage.assignment.stage_index,
                     stage.assignment.role.as_str(),
+                    stage.assignment.layer_range.start,
+                    stage.assignment.layer_range.end,
                     stage.worker.backend().as_str()
                 );
                 self.state.set_status(format!(
@@ -3214,6 +3269,8 @@ impl NodeRuntime {
                 self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
                 self.state.snapshot.inference.error = Some(error.clone());
                 self.state.snapshot.inference.status_line = "Pipeline stage load failed".to_owned();
+                self.state.snapshot.models.error = Some(error.clone());
+                self.state.snapshot.models.status_line = "Stage prepare/load failed".to_owned();
                 self.state.set_status(error);
             }
         }
@@ -5075,16 +5132,8 @@ mod tests {
                 !snapshot.models.busy && snapshot.models.resolved_identity.is_some()
             })
             .await;
-            handle
-                .send(UiCommand::PrepareSelectedModel)
-                .await
-                .expect("prepare");
-            wait_for_timeout(handle, Duration::from_secs(30 * 60), |snapshot| {
-                !snapshot.models.busy && snapshot.models.last_prepare_summary.is_some()
-            })
-            .await;
         }
-        eprintln!("P09 multi: prepare done");
+        eprintln!("P09 multi: probe done (stage prepare deferred to LoadPipelineStage)");
 
         let first_ready = first_handle.snapshot();
         let final_ready = final_handle.snapshot();

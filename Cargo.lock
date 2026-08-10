@@ -3022,6 +3022,7 @@ dependencies = [
  "hf-hub",
  "mesh-core",
  "reqwest",
+ "safetensors 0.4.5",
  "serde",
  "serde_json",
  "sha2",

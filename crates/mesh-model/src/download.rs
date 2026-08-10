@@ -8,9 +8,9 @@ use mesh_core::{
 use sha2::{Digest, Sha256};
 
 use crate::cache::{
-    absolute_cache_path, complete_entry_id, complete_object_rel_path, ensure_parent, file_len,
-    partial_meta_path, partial_path, publish_file, range_entry_id, range_object_rel_path,
-    validate_entry_file,
+    absolute_cache_path, artifact_path_hash, complete_entry_id, complete_object_rel_path,
+    ensure_parent, file_len, partial_meta_path, partial_path, publish_file, range_entry_id,
+    range_object_rel_path, repository_hash, validate_entry_file,
 };
 use crate::huggingface::HuggingFaceProvider;
 use crate::manifest::{CanonicalManifest, TensorRecord};
@@ -212,6 +212,264 @@ pub fn build_layer_plan(
         disk_bytes_required,
         gpu_bytes_reserved: disk_bytes_required,
     })
+}
+
+pub fn stage_plan_flags(
+    role: mesh_core::StageRole,
+    tie_word_embeddings: bool,
+) -> (bool, bool) {
+    let include_embeddings = role.owns_embeddings() || (role.owns_output_head() && tie_word_embeddings);
+    let include_final = role.owns_output_head();
+    (include_embeddings, include_final)
+}
+
+pub fn resolved_tie_word_embeddings(resolved: &ResolvedModel) -> bool {
+    resolved
+        .manifest
+        .architecture
+        .get("tie_word_embeddings")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn build_stage_plan(
+    deployment_id: impl Into<String>,
+    resolved: &ResolvedModel,
+    role: mesh_core::StageRole,
+    layer_range: mesh_core::LayerRange,
+) -> ModelResult<NodeModelPlan> {
+    let tie = resolved_tie_word_embeddings(resolved);
+    let (include_embeddings, include_final) = stage_plan_flags(role, tie);
+    build_layer_plan(
+        deployment_id,
+        resolved,
+        layer_range.start,
+        layer_range.end,
+        include_embeddings,
+        include_final,
+    )
+}
+
+#[derive(Clone)]
+struct OwnedTensorView {
+    dtype: safetensors::Dtype,
+    shape: Vec<usize>,
+    data: Vec<u8>,
+}
+
+impl safetensors::View for OwnedTensorView {
+    fn dtype(&self) -> safetensors::Dtype {
+        self.dtype
+    }
+
+    fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn data(&self) -> std::borrow::Cow<'_, [u8]> {
+        std::borrow::Cow::Borrowed(&self.data)
+    }
+
+    fn data_len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+fn mesh_dtype_to_safetensors(dtype: SafetensorsDtype) -> ModelResult<safetensors::Dtype> {
+    Ok(match dtype {
+        SafetensorsDtype::Bool => safetensors::Dtype::BOOL,
+        SafetensorsDtype::U8 => safetensors::Dtype::U8,
+        SafetensorsDtype::I8 => safetensors::Dtype::I8,
+        SafetensorsDtype::I16 => safetensors::Dtype::I16,
+        SafetensorsDtype::U16 => safetensors::Dtype::U16,
+        SafetensorsDtype::F16 => safetensors::Dtype::F16,
+        SafetensorsDtype::Bf16 => safetensors::Dtype::BF16,
+        SafetensorsDtype::I32 => safetensors::Dtype::I32,
+        SafetensorsDtype::U32 => safetensors::Dtype::U32,
+        SafetensorsDtype::F32 => safetensors::Dtype::F32,
+        SafetensorsDtype::I64 => safetensors::Dtype::I64,
+        SafetensorsDtype::U64 => safetensors::Dtype::U64,
+        SafetensorsDtype::F64 => safetensors::Dtype::F64,
+    })
+}
+
+fn stage_weight_rel_path(
+    identity: &mesh_core::ModelIdentity,
+    assignment_hash: &str,
+    artifact_path: &str,
+) -> String {
+    format!(
+        "stages/{}/{}/{}/{}/{}",
+        identity.provider,
+        repository_hash(&identity.repository),
+        identity.revision,
+        &assignment_hash[..assignment_hash.len().min(16)],
+        artifact_path_hash(artifact_path)
+    )
+}
+
+fn find_prepared_cover<'a>(
+    prepared: &'a [PreparedArtifact],
+    assignment: &TensorAssignment,
+) -> Option<&'a PreparedArtifact> {
+    prepared.iter().find(|entry| {
+        if entry.artifact_path != assignment.artifact_path {
+            return false;
+        }
+        match (entry.range_start, entry.range_end) {
+            (None, None) => true,
+            (Some(start), Some(end)) => {
+                start <= assignment.absolute_start && end >= assignment.absolute_end
+            }
+            _ => false,
+        }
+    })
+}
+
+fn read_assignment_bytes(
+    cache_root: &Path,
+    cover: &PreparedArtifact,
+    assignment: &TensorAssignment,
+) -> ModelResult<Vec<u8>> {
+    let path = cache_root.join(&cover.relative_path);
+    let file = std::fs::File::open(&path)?;
+    let mut file = std::io::BufReader::new(file);
+    use std::io::{Read, Seek, SeekFrom};
+    let (offset, len) = match (cover.range_start, cover.range_end) {
+        (None, None) => {
+            let start = assignment.absolute_start;
+            let end = assignment.absolute_end;
+            if end < start {
+                return Err(ModelError::Invalid(format!(
+                    "invalid tensor range for {}",
+                    assignment.name
+                )));
+            }
+            (start, end - start)
+        }
+        (Some(range_start), Some(range_end)) => {
+            if assignment.absolute_start < range_start || assignment.absolute_end > range_end {
+                return Err(ModelError::Invalid(format!(
+                    "prepared range does not cover {}",
+                    assignment.name
+                )));
+            }
+            (
+                assignment.absolute_start - range_start,
+                assignment.absolute_end - assignment.absolute_start,
+            )
+        }
+        _ => {
+            return Err(ModelError::Invalid(format!(
+                "incomplete range metadata for {}",
+                assignment.name
+            )));
+        }
+    };
+    file.seek(SeekFrom::Start(offset))?;
+    let mut buf = vec![0u8; len as usize];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
+/// Build mmap-able safetensors files that contain only the tensors in `prepared.plan`.
+/// Whole-shard cache hits are reused as-is; pure range artifacts are rewritten under `stages/`.
+pub fn materialize_stage_weight_files(
+    cache_root: &Path,
+    prepared: &PrepareResult,
+) -> ModelResult<Vec<(String, PathBuf)>> {
+    let mut by_artifact: BTreeMap<String, Vec<&TensorAssignment>> = BTreeMap::new();
+    for assignment in prepared
+        .plan
+        .tensor_assignments
+        .iter()
+        .chain(prepared.plan.global_tensors.iter())
+    {
+        by_artifact
+            .entry(assignment.artifact_path.clone())
+            .or_default()
+            .push(assignment);
+    }
+    if by_artifact.is_empty() {
+        return Err(ModelError::Invalid(
+            "stage prepare plan has no tensors to materialize".to_owned(),
+        ));
+    }
+
+    let mut out = Vec::with_capacity(by_artifact.len());
+    for (artifact_path, assignments) in by_artifact {
+        let covers = assignments
+            .iter()
+            .map(|assignment| {
+                find_prepared_cover(&prepared.prepared, assignment).ok_or_else(|| {
+                    ModelError::Invalid(format!(
+                        "missing prepared cover for tensor {} in {}",
+                        assignment.name, artifact_path
+                    ))
+                })
+            })
+            .collect::<ModelResult<Vec<_>>>()?;
+
+        let whole = covers.iter().find(|cover| {
+            cover.range_start.is_none()
+                && cover.range_end.is_none()
+                && cache_root.join(&cover.relative_path).is_file()
+        });
+        if let Some(cover) = whole {
+            out.push((
+                artifact_path,
+                cache_root.join(&cover.relative_path),
+            ));
+            continue;
+        }
+
+        let mut tensors = Vec::with_capacity(assignments.len());
+        for (assignment, cover) in assignments.iter().zip(covers.iter()) {
+            let dtype = SafetensorsDtype::parse(&assignment.dtype).ok_or_else(|| {
+                ModelError::Unsupported(format!("dtype {} unsupported", assignment.dtype))
+            })?;
+            validate_tensor_byte_length(
+                dtype,
+                &assignment.shape,
+                assignment.absolute_start,
+                assignment.absolute_end,
+            )?;
+            let data = read_assignment_bytes(cache_root, cover, assignment)?;
+            let shape = assignment
+                .shape
+                .iter()
+                .map(|dim| *dim as usize)
+                .collect::<Vec<_>>();
+            tensors.push((
+                assignment.name.clone(),
+                OwnedTensorView {
+                    dtype: mesh_dtype_to_safetensors(dtype)?,
+                    shape,
+                    data,
+                },
+            ));
+        }
+
+        let relative = stage_weight_rel_path(
+            &prepared.identity,
+            &prepared.plan.assignment_hash,
+            &artifact_path,
+        );
+        let absolute = absolute_cache_path(cache_root, &relative);
+        if !absolute.is_file() {
+            ensure_parent(&absolute)?;
+            let bytes = safetensors::serialize(tensors, &None).map_err(|error| {
+                ModelError::Invalid(format!("stage safetensors serialize failed: {error}"))
+            })?;
+            let partial = partial_path(&absolute);
+            std::fs::write(&partial, bytes)?;
+            publish_file(&partial, &absolute)?;
+        }
+        out.push((artifact_path, absolute));
+    }
+
+    out.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(out)
 }
 
 fn to_assignment(tensor: &TensorRecord) -> TensorAssignment {
@@ -828,6 +1086,196 @@ mod tests {
         assert_eq!(plan.last_layer_exclusive, 1);
         assert!(!plan.assignment_hash.is_empty());
     }
+
+    fn multi_tensor_fixture() -> (Vec<u8>, CanonicalManifest, ArtifactRef, ResolvedModel) {
+        // two BF16 tensors [2,2] => 8 bytes each
+        let header_json = br#"{"embed":{"dtype":"BF16","shape":[2,2],"data_offsets":[0,8]},"layer0":{"dtype":"BF16","shape":[2,2],"data_offsets":[8,16]},"norm":{"dtype":"BF16","shape":[2,2],"data_offsets":[16,24]}}"#;
+        let header_len = header_json.len() as u64;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&header_len.to_le_bytes());
+        bytes.extend_from_slice(header_json);
+        bytes.extend_from_slice(&[1u8; 24]);
+        let embed = crate::safetensors::tensor_payload_absolute_range(header_len, (0, 8));
+        let layer0 = crate::safetensors::tensor_payload_absolute_range(header_len, (8, 16));
+        let norm = crate::safetensors::tensor_payload_absolute_range(header_len, (16, 24));
+        let revision = "0123456789abcdef0123456789abcdef01234567".to_owned();
+        let manifest = CanonicalManifest {
+            provider: PROVIDER_HUGGINGFACE.to_owned(),
+            repository: "fixture/stage".to_owned(),
+            revision: revision.clone(),
+            adapter_id: "qwen3-dense".to_owned(),
+            adapter_version: "1.0.0".to_owned(),
+            model_format: ModelFormat::Safetensors,
+            quantization: None,
+            architecture: serde_json::json!({
+                "num_hidden_layers": 2,
+                "tie_word_embeddings": true
+            }),
+            tensors: vec![
+                TensorRecord {
+                    name: "model.embed_tokens.weight".to_owned(),
+                    dtype: "BF16".to_owned(),
+                    shape: vec![2, 2],
+                    role: TensorRole::Embedding,
+                    layer_index: None,
+                    artifact_path: "model.safetensors".to_owned(),
+                    absolute_start: embed.0,
+                    absolute_end: embed.1,
+                    range_digest_hex: None,
+                },
+                TensorRecord {
+                    name: "model.layers.0.weight".to_owned(),
+                    dtype: "BF16".to_owned(),
+                    shape: vec![2, 2],
+                    role: TensorRole::Layer,
+                    layer_index: Some(0),
+                    artifact_path: "model.safetensors".to_owned(),
+                    absolute_start: layer0.0,
+                    absolute_end: layer0.1,
+                    range_digest_hex: None,
+                },
+                TensorRecord {
+                    name: "model.norm.weight".to_owned(),
+                    dtype: "BF16".to_owned(),
+                    shape: vec![2, 2],
+                    role: TensorRole::FinalNorm,
+                    layer_index: None,
+                    artifact_path: "model.safetensors".to_owned(),
+                    absolute_start: norm.0,
+                    absolute_end: norm.1,
+                    range_digest_hex: None,
+                },
+            ],
+            artifacts: vec![ArtifactRecord {
+                relative_path: "model.safetensors".to_owned(),
+                size_bytes: Some(bytes.len() as u64),
+                etag: None,
+                digest_hex: None,
+            }],
+            tokenizer_artifacts: vec!["tokenizer.json".to_owned()],
+            tokenizer_hash: "cc".repeat(32),
+            memory_estimate_bytes: 24,
+        };
+        let artifact = ArtifactRef {
+            provider: PROVIDER_HUGGINGFACE.to_owned(),
+            repository: "fixture/stage".to_owned(),
+            revision,
+            relative_path: "model.safetensors".to_owned(),
+            size_bytes: Some(bytes.len() as u64),
+            etag: None,
+            digest_hex: None,
+        };
+        let identity = crate::manifest::build_manifest_identity(&manifest).unwrap();
+        let resolved = ResolvedModel {
+            identity,
+            manifest,
+            artifacts: vec![artifact.clone()],
+        };
+        (bytes, resolved.manifest.clone(), artifact, resolved)
+    }
+
+    #[test]
+    fn layer_plan_filters_and_includes_tied_embed_for_final() {
+        let (_bytes, _manifest, _artifact, resolved) = multi_tensor_fixture();
+        let first = build_stage_plan(
+            "deploy-first",
+            &resolved,
+            mesh_core::StageRole::First,
+            mesh_core::LayerRange::new(0, 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.first_layer, 0);
+        assert_eq!(first.last_layer_exclusive, 1);
+        assert!(
+            first
+                .global_tensors
+                .iter()
+                .any(|tensor| tensor.name.contains("embed_tokens"))
+        );
+        assert!(
+            !first
+                .global_tensors
+                .iter()
+                .any(|tensor| tensor.name.contains("norm"))
+        );
+        assert_eq!(first.tensor_assignments.len(), 1);
+
+        let final_stage = build_stage_plan(
+            "deploy-final",
+            &resolved,
+            mesh_core::StageRole::Final,
+            mesh_core::LayerRange::new(1, 2).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            final_stage
+                .global_tensors
+                .iter()
+                .any(|tensor| tensor.name.contains("embed_tokens")),
+            "final tied model must include embed tensors"
+        );
+        assert!(
+            final_stage
+                .global_tensors
+                .iter()
+                .any(|tensor| tensor.name.contains("norm"))
+        );
+        assert!(final_stage.tensor_assignments.is_empty());
+
+        let middle = build_stage_plan(
+            "deploy-middle",
+            &resolved,
+            mesh_core::StageRole::Middle,
+            mesh_core::LayerRange::new(0, 1).unwrap(),
+        )
+        .unwrap();
+        assert!(middle.global_tensors.is_empty());
+        assert_eq!(middle.tensor_assignments.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn prepare_layer_plan_uses_ranges_and_materializes() {
+        let (bytes, _manifest, _artifact, resolved) = multi_tensor_fixture();
+        // force ranges: layer-only plan covers 8/payload bytes of a larger file (<80%)
+        let plan = build_stage_plan(
+            "deploy-range",
+            &resolved,
+            mesh_core::StageRole::Middle,
+            mesh_core::LayerRange::new(0, 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plan.tensor_assignments.len(), 1);
+        assert!(plan.disk_bytes_required > 0);
+
+        let root = std::env::temp_dir().join(format!("mesh-stage-prep-{}", now_unix_ms()));
+        let _ = std::fs::create_dir_all(&root);
+        let fetch = FixtureFetch {
+            bytes: Bytes::from(bytes.clone()),
+        };
+        let mut progress = NoopProgress;
+        let result = prepare_plan(&fetch, &resolved, &plan, &root, &[], &mut progress)
+            .await
+            .expect("prepare layer");
+        assert!(
+            result
+                .prepared
+                .iter()
+                .any(|item| item.range_start.is_some() && item.range_end.is_some()),
+            "expected range artifacts, got {:?}",
+            result.prepared
+        );
+
+        let weights = materialize_stage_weight_files(&root, &result).expect("materialize");
+        assert_eq!(weights.len(), 1);
+        assert!(weights[0].1.is_file());
+        let on_disk = std::fs::read(&weights[0].1).unwrap();
+        assert!(on_disk.len() < bytes.len());
+        let st = safetensors::SafeTensors::deserialize(&on_disk).expect("deserialize stage file");
+        assert!(st.tensor("model.layers.0.weight").is_ok());
+        assert!(st.tensor("model.embed_tokens.weight").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
 
     struct FixtureFetch {
         bytes: Bytes,

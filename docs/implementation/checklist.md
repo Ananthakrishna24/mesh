@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 multi-node path is implemented on Linux: activation frame, placement types, mesh-owned partial `Qwen3Stage`, in-process and dual-node QUIC pipeline runtime with cancel/queue bounds, NextTokenFeedback, and CUDA Qwen3-4B two-stage dual-node generate. Concurrent pipeline sequences and Qwen3-8B distributed proof remain. Metal/Windows host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 multi-node path is implemented on Linux: activation frame, placement types, mesh-owned partial `Qwen3Stage`, stage-filtered prepare/load (`build_stage_plan` + range materialize), in-process and dual-node QUIC pipeline runtime with cancel/queue bounds, NextTokenFeedback, and CUDA Qwen3-4B two-stage dual-node generate. Concurrent pipeline sequences and Qwen3-8B distributed proof remain. Metal/Windows host proofs remain.
 
 
 
@@ -455,7 +455,7 @@ Build:
 - [x] Implement layer placement.
   - Evidence: `PlacementPlan` / `StageRole` / `LayerRange` in `mesh-core`; `split_even` + validate unit tests (`2026-08-10`).
 - [x] Implement partial stage loading.
-  - Evidence: mesh-owned `Qwen3Stage` loads only assigned continuous layer range + role-owned embed/norm/lm_head (`2026-08-10`).
+  - Evidence: mesh-owned `Qwen3Stage` loads only assigned continuous layer range + role-owned embed/norm/lm_head; `build_stage_plan` / `prepare_plan` download assigned tensors (ranges or covering shards); `materialize_stage_weight_files` rewrites pure ranges into mmap-able safetensors; `LoadPipelineStage` prepares the local assignment before load (`2026-08-10`).
 - [x] Implement the accepted activation wire format.
   - Evidence: 128-byte `ActivationHeader` encode/decode and `mesh-net` uni-stream frame I/O (`2026-08-10`).
 - [x] Implement the pipeline stage runtime.

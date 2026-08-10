@@ -87,12 +87,17 @@ impl eframe::App for MeshApp {
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.add_space(12.0);
-            match snapshot.screen {
-                AppScreen::FirstRun => self.draw_first_run(ui),
-                AppScreen::Enroll => self.draw_enroll(ui, &snapshot),
-                AppScreen::Dashboard => self.draw_dashboard(ui, &snapshot),
-            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(12.0);
+                    match snapshot.screen {
+                        AppScreen::FirstRun => self.draw_first_run(ui),
+                        AppScreen::Enroll => self.draw_enroll(ui, &snapshot),
+                        AppScreen::Dashboard => self.draw_dashboard(ui, &snapshot),
+                    }
+                    ui.add_space(24.0);
+                });
         });
     }
 

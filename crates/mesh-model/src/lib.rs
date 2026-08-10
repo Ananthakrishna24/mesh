@@ -17,7 +17,8 @@ pub use cache::{
 };
 pub use download::{
     DownloadProgressEvent, FetchSource, NoopProgress, PrepareResult, ProgressSink,
-    build_complete_plan, build_layer_plan, net_disk_bytes_required, prepare_plan,
+    build_complete_plan, build_layer_plan, build_stage_plan, materialize_stage_weight_files,
+    net_disk_bytes_required, prepare_plan, resolved_tie_word_embeddings, stage_plan_flags,
 };
 pub use error::{ModelError, ModelResult};
 pub use huggingface::{HuggingFaceProvider, identity_summary, sha256_file};
