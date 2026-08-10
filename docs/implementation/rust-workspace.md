@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted foundation |
 | Canonical for | Initial Rust crate boundaries |
 | Parent | [Documentation index](../README.md) |
 
-No Rust workspace exists yet. This document defines the intended boundary before scaffolding.
+The root Cargo workspace is scaffolded. Crate boundaries below remain the ownership rules for later phases.
 
 ## Workspace shape
 

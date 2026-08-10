@@ -25,8 +25,9 @@ This folder is the project memory. Read it before changing architecture or code.
 12. [Inference parallelism and edge cases](architecture/inference/parallelism-and-edge-cases.md)
 13. [GPU backends](architecture/compute/gpu-backends.md)
 14. [Architecture and implementation roadmap](implementation/roadmap.md)
-15. [Rust workspace plan](implementation/rust-workspace.md)
-16. [Architecture decisions](decisions/)
+15. [Roadmap implementation checklist](implementation/checklist.md)
+16. [Rust workspace plan](implementation/rust-workspace.md)
+17. [Architecture decisions](decisions/)
 
 ## Source-of-truth map
 
@@ -49,6 +50,7 @@ This folder is the project memory. Read it before changing architecture or code.
 | Is Windows NVIDIA a required target? | [ADR-0006](decisions/0006-windows-nvidia-required.md) |
 | How should the Rust repository be split? | [Rust workspace plan](implementation/rust-workspace.md) |
 | What remains to be decided and built? | [Architecture and implementation roadmap](implementation/roadmap.md) |
+| How is roadmap implementation progress tracked? | [Roadmap implementation checklist](implementation/checklist.md) |
 
 Do not copy a rule into several documents. Update the canonical document and link to it.
 

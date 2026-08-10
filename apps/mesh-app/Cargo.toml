@@ -1,0 +1,21 @@
+[package]
+name = "mesh-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native eframe desktop application"
+default-run = "mesh"
+
+[[bin]]
+name = "mesh"
+path = "src/main.rs"
+
+[dependencies]
+mesh-core = { workspace = true }
+mesh-node = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

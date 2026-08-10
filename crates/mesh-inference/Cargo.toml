@@ -1,0 +1,10 @@
+[package]
+name = "mesh-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Placement, reservations, batching, and pipeline control"
+
+[dependencies]
+mesh-core = { workspace = true }

@@ -8,7 +8,7 @@
 
 ## Current state
 
-The system shape is accepted and documented. No Rust workspace or executable exists yet.
+The Cargo workspace and native `mesh` application shell exist. P01 Linux proof is done; Windows and macOS host proofs remain. Begin P02 after those proofs or continue on Linux for enrollment internals while keeping cross-platform proof gates honest.
 
 Accepted areas:
 
@@ -298,4 +298,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Begin P01 and the manually reachable path of P02. Before automatic internet enrollment is complete, select router-mapping crates and peer-record merge rules. Before P07 inference, lock tokenizer, sampling, KV-cache, provider validation, and network placement contracts.
+P01 shell is implemented. Complete Windows and macOS `cargo run --release` proofs, then begin the manually reachable path of P02. Before automatic internet enrollment is complete, select router-mapping crates and peer-record merge rules. Before P07 inference, lock tokenizer, sampling, KV-cache, provider validation, and network placement contracts.

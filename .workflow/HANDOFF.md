@@ -13,9 +13,17 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Locked bundled SQLite state, transactional migrations, a dedicated storage worker, and native provider credential stores (`4582c8b`).
 - Locked the 128-byte activation header, contiguous little-endian FP16 payload, 256 MiB limit, validation, and backpressure rules (`4582c8b`).
 - Added `mesh-store` to the accepted crate boundaries and updated architecture indexes and roadmap (`4582c8b`).
+- Added an exhaustive roadmap tracker at `docs/implementation/checklist.md` and indexed it from `docs/README.md` (uncommitted; roadmap anchor `31699c2`).
+- Declared root `AGENTS.md` with serial phase order, almost-no-comments rule, crate-boundary, and checklist rules (uncommitted).
+- Scaffolded the root Cargo workspace with `apps/mesh-app` and `crates/{mesh-core,mesh-store,mesh-net,mesh-hardware,mesh-model,mesh-compute,mesh-inference,mesh-node}` (uncommitted).
+- Implemented typed `UiCommand` / `UiSnapshot` channels and the `mesh-node` runtime loop (uncommitted).
+- Implemented the eframe first-run and empty dashboard screens in the `mesh` binary (uncommitted).
+- Proved Linux P01 launch: `timeout 5s ./target/release/mesh` starts the native app and node runtime without a frontend build or helper process (uncommitted).
+- Checked P01 build items and Linux proof evidence in `docs/implementation/checklist.md` (uncommitted).
 
 # In progress
-- The P01 workspace and native application shell are ready to implement.
+- P01 cross-platform proof is incomplete: Windows and macOS host launches remain open.
+- P02 GUI-driven two-node enrollment has not started.
 
 # Decisions
 - Rust is the implementation language.
@@ -32,6 +40,12 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Use Qwen3-4B as the normal development model and Qwen3-8B as the distributed acceptance model.
 - Start Windows CI after the first confident native Windows Qwen3-4B CUDA implementation; manual Windows proofs remain required before then.
 - Distributed training remains deferred.
+- Keep `roadmap.md` canonical; `checklist.md` only tracks implementation progress, decision gates, proofs, and deferred status.
+- Preserve A05 ownership choices as preferences until formally decided; do not turn preferred ownership into an accepted contract.
+- Implement phases serially. Do not parallelize implementation phases.
+- Write almost no code comments; prefer explicit names and types.
+- P01 temporary IDs use UUID placeholders in `mesh-core`. Certificate-derived Node IDs replace them in P02.
+- eframe/egui `0.36` uses `App::ui(&mut Ui)` and `egui::Panel::{top,bottom}` rather than the older `update` / `TopBottomPanel` API.
 
 # Gotchas
 - An inviter must accept an unknown joining certificate provisionally at TLS, but that connection may process only one bounded `HELLO` until its invitation binds and commits.
@@ -43,13 +57,11 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - A short enrollment code cannot work without a public lookup service; the invitation carries endpoint details.
 - Automatic enrollment cannot cross every CGNAT or firewall; the GUI provides guided recovery.
 - The repository rule requires this handoff snapshot even though it is not project architecture documentation.
+- `cargo run --release` is a long-lived GUI process; use a wall-clock timeout around the binary for smoke proofs.
+- Closing the window must send `UiCommand::Shutdown` so the Tokio worker thread exits before process teardown.
 
 # Next
-1. Scaffold P01: root Cargo workspace, `mesh-core`, `mesh-store`, `mesh-net`, `mesh-node`, and `mesh-app`.
-2. Pin initial dependency versions and target-gated features.
-3. Open the eframe first-run window through `cargo run --release`.
-4. Add typed GUI command and runtime snapshot channels.
-5. Implement SQLite startup, migration zero-to-one, and atomic local identity creation.
-6. Implement the manually reachable P02 Quinn enrollment path with generated Protobuf code.
-7. Select router-mapping crates and peer-record merge rules before calling automatic internet enrollment complete.
-8. Lock tokenizer, sampling, KV-cache, provider validation, and placement thresholds before their inference phases.
+1. Prove `cargo run --release` on Windows and macOS development hosts; check the remaining P01 proof boxes only after those runs.
+2. Start P02: stable certificate-derived IDs, `mesh-store` SQLite identity transaction, Quinn endpoint, invitation create/input, `HELLO`/`WELCOME`, peer store, enrollment screens, restart reconnect.
+3. Select router-mapping crates (A08) and peer-record merge rules (A10) before calling automatic internet enrollment complete.
+4. Lock tokenizer/sampling (A05), KV-cache (A06), provider validation (A11-A13), and placement thresholds (A07) before their inference phases.

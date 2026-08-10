@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/mesh-app",
+    "crates/mesh-core",
+    "crates/mesh-store",
+    "crates/mesh-net",
+    "crates/mesh-hardware",
+    "crates/mesh-model",
+    "crates/mesh-compute",
+    "crates/mesh-inference",
+    "crates/mesh-node",
+]
+default-members = ["apps/mesh-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/local/mesh"
+rust-version = "1.88"
+
+[workspace.dependencies]
+mesh-core = { path = "crates/mesh-core" }
+mesh-store = { path = "crates/mesh-store" }
+mesh-net = { path = "crates/mesh-net" }
+mesh-hardware = { path = "crates/mesh-hardware" }
+mesh-model = { path = "crates/mesh-model" }
+mesh-compute = { path = "crates/mesh-compute" }
+mesh-inference = { path = "crates/mesh-inference" }
+mesh-node = { path = "crates/mesh-node" }
+
+eframe = { version = "0.36.1", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.36.1"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
