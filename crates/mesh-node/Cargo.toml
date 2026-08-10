@@ -8,8 +8,10 @@ description = "Node runtime composition and lifecycle"
 
 [dependencies]
 mesh-core = { workspace = true }
+mesh-hardware = { workspace = true }
 mesh-net = { workspace = true }
 mesh-store = { workspace = true }
+quinn = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -14,6 +14,11 @@ message ControlEnvelope {
     PeerUpdate peer_update = 12;
     Heartbeat heartbeat = 13;
     ErrorMessage error = 14;
+    CapabilityReport capability_report = 15;
+    BenchmarkRequest benchmark_request = 16;
+    BenchmarkAccept benchmark_accept = 17;
+    BenchmarkReject benchmark_reject = 18;
+    BenchmarkResult benchmark_result = 19;
   }
 }
 
@@ -104,4 +109,80 @@ message EnrollmentInviteV1 {
   bytes enrollment_secret = 9;
   int64 expires_at_unix_ms = 10;
   repeated EndpointCandidate candidates = 11;
+}
+
+message CapabilityReport {
+  int64 collected_at_unix_ms = 1;
+  string os = 2;
+  string arch = 3;
+  string cpu_model = 4;
+  uint32 cpu_logical_cores = 5;
+  uint64 memory_total_bytes = 6;
+  uint64 memory_available_bytes = 7;
+  uint64 disk_total_bytes = 8;
+  uint64 disk_available_bytes = 9;
+  repeated GpuDevice gpus = 10;
+  double cpu_fp32_gflops = 11;
+  int64 compute_measured_at_unix_ms = 12;
+  string status = 13;
+}
+
+message GpuDevice {
+  GpuBackend backend = 1;
+  string stable_id = 2;
+  string name = 3;
+  uint64 total_memory_bytes = 4;
+  optional uint64 available_memory_bytes = 5;
+  optional string driver_version = 6;
+  optional string runtime_version = 7;
+}
+
+enum GpuBackend {
+  GPU_BACKEND_UNSPECIFIED = 0;
+  CUDA = 1;
+  METAL = 2;
+}
+
+message BenchmarkRequest {
+  bytes probe_id = 1;
+  BenchmarkKind kind = 2;
+  BenchmarkDirection direction = 3;
+  uint64 payload_bytes = 4;
+}
+
+message BenchmarkAccept {
+  bytes probe_id = 1;
+}
+
+message BenchmarkReject {
+  bytes probe_id = 1;
+  string reason = 2;
+}
+
+message BenchmarkResult {
+  bytes probe_id = 1;
+  BenchmarkKind kind = 2;
+  BenchmarkDirection direction = 3;
+  double one_way_delay_ms = 4;
+  double rtt_ms = 5;
+  double rtt_p95_ms = 6;
+  uint32 stability_score = 7;
+  uint32 sample_count = 8;
+  uint32 loss_count = 9;
+  uint64 bandwidth_bps = 10;
+  uint64 payload_bytes = 11;
+  double transfer_ms = 12;
+  int64 measured_at_unix_ms = 13;
+}
+
+enum BenchmarkKind {
+  BENCHMARK_KIND_UNSPECIFIED = 0;
+  DELAY = 1;
+  BANDWIDTH = 2;
+}
+
+enum BenchmarkDirection {
+  BENCHMARK_DIRECTION_UNSPECIFIED = 0;
+  TO_PEER = 1;
+  FROM_PEER = 2;
 }

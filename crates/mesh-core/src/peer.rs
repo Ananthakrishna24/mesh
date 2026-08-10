@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::net::SocketAddr;
 
-use crate::{EnrollmentId, NodeId};
+use crate::{EnrollmentId, LinkMeasurement, NodeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CandidateKind {
@@ -52,12 +52,14 @@ pub struct PeerRecord {
     pub candidates: Vec<EndpointCandidate>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PeerSummary {
     pub node_id: NodeId,
     pub display_name: String,
     pub connected: bool,
     pub address: Option<SocketAddr>,
+    pub hardware_line: Option<String>,
+    pub link: Option<LinkMeasurement>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell and P02 manually reachable enrollment are implemented on Linux. Windows and macOS host proofs remain deferred to the end. Automatic internet enrollment (router mapping, hole punching) remains for P04 after A08/A10.
+P01 shell, P02 enrollment, and P03 Linux hardware/network discovery are implemented. A07 is accepted. Windows and macOS host proofs remain deferred to the end. Automatic internet enrollment (router mapping, hole punching) remains for P04 after A08/A10.
 
 Accepted areas:
 
@@ -83,7 +83,7 @@ Define layout, data type, maximum context, batch allocation, grouped-query atten
 
 ### A07 — Network benchmark and placement cost
 
-Define directional delay and bandwidth tests, measurement age, stability, compute benchmarks, pipeline cost, rejection thresholds, and maximum WAN stage count.
+Accepted in [Network benchmark and placement cost](../architecture/networking/network-benchmark.md) and [ADR-0012](../decisions/0012-network-benchmark-and-placement-cost.md).
 
 ### A08 — NAT and router integration
 
@@ -298,4 +298,4 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-P02 Linux enrollment path works. Keep Windows/macOS proofs until the end. Before automatic internet enrollment is complete, select router-mapping crates (A08) and peer-record merge rules (A10). Next implementation phase is P03 after A07, or continue hardening P02 reconnect/GUI if needed.
+P03 Linux path works. Keep Windows/macOS proofs until the end. Before automatic internet enrollment is complete, select router-mapping crates (A08) and peer-record merge rules (A10). Next implementation phase is P04 after those gates, or continue cross-platform proofs later.

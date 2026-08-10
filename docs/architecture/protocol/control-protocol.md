@@ -57,6 +57,11 @@ message ControlEnvelope {
     PeerUpdate peer_update = 12;
     Heartbeat heartbeat = 13;
     ErrorMessage error = 14;
+    CapabilityReport capability_report = 15;
+    BenchmarkRequest benchmark_request = 16;
+    BenchmarkAccept benchmark_accept = 17;
+    BenchmarkReject benchmark_reject = 18;
+    BenchmarkResult benchmark_result = 19;
 
     ResourceQuery resource_query = 20;
     ResourceOffer resource_offer = 21;
@@ -121,6 +126,12 @@ Rules:
 4. `WELCOME` selects one minor protocol version and returns the inviter plus known peers. Permanent peer state and invitation consumption are one local transaction.
 5. A reconnect sends `HELLO` without enrollment fields and must match an existing peer record.
 6. A rejected handshake sends an error when possible, then closes the connection.
+
+## Capability and benchmark messages
+
+After a successful handshake, peers exchange `CapabilityReport` and may run directional delay and bandwidth probes. Exact measurement rules, age windows, stability scoring, and placement thresholds are canonical in [Network benchmark and placement cost](../networking/network-benchmark.md).
+
+Bandwidth payloads use a separate unidirectional QUIC stream with a fixed 32-byte `MSHB` header. They never travel inside control frames.
 
 ## Compatibility
 

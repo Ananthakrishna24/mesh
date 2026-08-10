@@ -15,5 +15,7 @@ Read accepted decisions before changing a related subsystem.
 | [ADR-0009](0009-quic-identity-and-invitations.md) | Stable QUIC identity and self-contained invitations | Accepted |
 | [ADR-0010](0010-sqlite-state-and-native-credentials.md) | SQLite state and native provider credentials | Accepted |
 | [ADR-0011](0011-fixed-activation-frame.md) | Fixed activation tensor frame | Accepted |
+| [ADR-0012](0012-network-benchmark-and-placement-cost.md) | Network benchmark and placement cost | Accepted |
+
 
 A new decision must state its context, selected approach, rejected approaches, and consequences. A replacement decision must link to the decision it replaces.

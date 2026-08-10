@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-use crate::{MeshId, NodeId, PeerSummary};
+use crate::{
+    CapabilityReport, LinkMeasurement, MeasurementAgeState, MeshId, NodeId, PeerSummary,
+    format_bits_per_second, format_bytes, measurement_age_state,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppScreen {
@@ -45,15 +48,119 @@ pub enum UiCommand {
     SubmitInvitation { text: String },
     CreateInvitation,
     ClearInvitation,
+    RefreshHardware,
     Shutdown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HardwareSummaryView {
+    pub line: String,
+    pub status: String,
+    pub cpu_model: String,
+    pub cpu_logical_cores: u32,
+    pub memory_total_bytes: u64,
+    pub memory_available_bytes: u64,
+    pub disk_total_bytes: u64,
+    pub disk_available_bytes: u64,
+    pub gpu_lines: Vec<String>,
+    pub cpu_fp32_gflops: f64,
+}
+
+impl HardwareSummaryView {
+    pub fn from_report(report: &CapabilityReport) -> Self {
+        let gpu_lines = if report.gpus.is_empty() {
+            vec!["No supported GPU discovered".to_owned()]
+        } else {
+            report
+                .gpus
+                .iter()
+                .map(|gpu| {
+                    let free = gpu
+                        .available_memory_bytes
+                        .map(format_bytes)
+                        .unwrap_or_else(|| "unknown".to_owned());
+                    format!(
+                        "{} · {} · {} total · {} free",
+                        gpu.backend.as_str(),
+                        gpu.name,
+                        format_bytes(gpu.total_memory_bytes),
+                        free
+                    )
+                })
+                .collect()
+        };
+        Self {
+            line: report.summary_line(),
+            status: report.status.clone(),
+            cpu_model: report.cpu_model.clone(),
+            cpu_logical_cores: report.cpu_logical_cores,
+            memory_total_bytes: report.memory_total_bytes,
+            memory_available_bytes: report.memory_available_bytes,
+            disk_total_bytes: report.disk_total_bytes,
+            disk_available_bytes: report.disk_available_bytes,
+            gpu_lines,
+            cpu_fp32_gflops: report.compute.cpu_fp32_gflops,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkSummaryView {
+    pub delay_ms: Option<f64>,
+    pub delay_age: MeasurementAgeState,
+    pub to_peer_bandwidth: Option<u64>,
+    pub to_peer_age: MeasurementAgeState,
+    pub from_peer_bandwidth: Option<u64>,
+    pub from_peer_age: MeasurementAgeState,
+    pub stability_score: Option<u8>,
+}
+
+impl LinkSummaryView {
+    pub fn from_measurement(link: Option<&LinkMeasurement>, now: i64) -> Self {
+        let delay = link.and_then(|item| item.delay.as_ref());
+        let to_peer = link.and_then(|item| item.to_peer_bandwidth.as_ref());
+        let from_peer = link.and_then(|item| item.from_peer_bandwidth.as_ref());
+        Self {
+            delay_ms: delay.map(|item| item.one_way_delay_ms),
+            delay_age: measurement_age_state(delay.map(|item| item.measured_at_unix_ms), now),
+            to_peer_bandwidth: to_peer.map(|item| item.bandwidth_bps),
+            to_peer_age: measurement_age_state(to_peer.map(|item| item.measured_at_unix_ms), now),
+            from_peer_bandwidth: from_peer.map(|item| item.bandwidth_bps),
+            from_peer_age: measurement_age_state(
+                from_peer.map(|item| item.measured_at_unix_ms),
+                now,
+            ),
+            stability_score: delay.map(|item| item.stability_score),
+        }
+    }
+
+    pub fn delay_label(&self) -> String {
+        match (self.delay_ms, self.delay_age) {
+            (Some(ms), age) => format!("{ms:.1} ms ({})", age.as_str()),
+            (None, _) => "unavailable".to_owned(),
+        }
+    }
+
+    pub fn bandwidth_label(&self, direction: &str) -> String {
+        let (bps, age) = if direction == "to" {
+            (self.to_peer_bandwidth, self.to_peer_age)
+        } else {
+            (self.from_peer_bandwidth, self.from_peer_age)
+        };
+        match bps {
+            Some(value) => format!("{} ({})", format_bits_per_second(value), age.as_str()),
+            None => "unavailable".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiSnapshot {
     pub screen: AppScreen,
     pub phase: RuntimePhase,
     pub local: LocalNodeSummary,
     pub peers: Vec<PeerSummary>,
+    pub hardware: Option<HardwareSummaryView>,
     pub status_message: String,
     pub enrollment: EnrollmentProgress,
     pub can_create_invitation: bool,
@@ -71,6 +178,7 @@ impl UiSnapshot {
                 listen_addr: None,
             },
             peers: Vec::new(),
+            hardware: None,
             status_message: "Starting local runtime…".to_owned(),
             enrollment: EnrollmentProgress {
                 steps: Vec::new(),
@@ -87,5 +195,6 @@ impl UiSnapshot {
         snapshot.phase = RuntimePhase::AwaitingOnboarding;
         snapshot.status_message = "Create a mesh or enroll this PC.".to_owned();
         snapshot
+
     }
 }

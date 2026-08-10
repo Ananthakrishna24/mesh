@@ -193,4 +193,5 @@ No software-only algorithm can guarantee direct communication through every CGNA
 - Router-mapping crates for UPnP, NAT-PMP, and PCP.
 - Full-mesh peer-count limit.
 - Candidate expiry and peer-record merge rules.
-- Network benchmark thresholds used by future job scheduling.
+
+Network benchmark thresholds used by job scheduling are accepted in [Network benchmark and placement cost](network-benchmark.md).

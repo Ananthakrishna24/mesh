@@ -131,7 +131,7 @@ pub async fn perform_joiner_handshake(
     enrollment_id: Option<EnrollmentId>,
     enrollment_secret: Option<[u8; 32]>,
     expected_inviter: NodeId,
-) -> NetResult<WelcomePayload> {
+) -> NetResult<(WelcomePayload, SendStream, RecvStream)> {
     let (mut send, mut recv) = open_control_stream(connection).await?;
     let hello = build_hello(identity, local_candidates, enrollment_id, enrollment_secret);
     write_envelope(&mut send, &hello).await?;
@@ -157,7 +157,7 @@ pub async fn perform_joiner_handshake(
                     "welcome responder node id mismatch".to_owned(),
                 ));
             }
-            Ok(payload)
+            Ok((payload, send, recv))
         }
         Some(Body::Error(error)) => Err(NetError::Protocol(format!(
             "handshake rejected: {}",
@@ -176,7 +176,7 @@ pub async fn complete_inviter_handshake(
     known_peers: &[PeerRecord],
     peer_certificate_der: Vec<u8>,
     mut accept_enrollment: impl FnMut(EnrollmentHello, PeerRecord) -> Result<(), (ErrorCode, String)>,
-) -> NetResult<PeerRecord> {
+) -> NetResult<(PeerRecord, SendStream, RecvStream)> {
     let (mut send, mut recv) = accept_control_stream(connection).await?;
     let envelope = timeout(Duration::from_secs(10), read_envelope(&mut recv))
         .await
@@ -271,7 +271,7 @@ pub async fn complete_inviter_handshake(
         envelope.message_id.clone(),
     );
     write_envelope(&mut send, &welcome).await?;
-    Ok(peer)
+    Ok((peer, send, recv))
 }
 
 pub fn decode_welcome(welcome: Welcome) -> NetResult<WelcomePayload> {

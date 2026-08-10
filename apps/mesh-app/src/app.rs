@@ -249,25 +249,87 @@ impl MeshApp {
             });
 
             card(&mut columns[1], |ui| {
-                ui.heading("Connected PCs");
+                ui.heading("Hardware");
                 ui.add_space(10.0);
-                if snapshot.peers.is_empty() {
-                    ui.label(RichText::new("No peers connected yet.").weak());
+                if let Some(hardware) = &snapshot.hardware {
+                    kv(ui, "CPU", &hardware.cpu_model);
+                    kv(ui, "Cores", &hardware.cpu_logical_cores.to_string());
+                    kv(
+                        ui,
+                        "Memory",
+                        &format!(
+                            "{} free / {}",
+                            mesh_core::format_bytes(hardware.memory_available_bytes),
+                            mesh_core::format_bytes(hardware.memory_total_bytes)
+                        ),
+                    );
+                    kv(
+                        ui,
+                        "Disk",
+                        &format!(
+                            "{} free / {}",
+                            mesh_core::format_bytes(hardware.disk_available_bytes),
+                            mesh_core::format_bytes(hardware.disk_total_bytes)
+                        ),
+                    );
+                    kv(
+                        ui,
+                        "CPU probe",
+                        &format!("{:.2} GFLOP/s", hardware.cpu_fp32_gflops),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("GPUs").strong());
+                    for line in &hardware.gpu_lines {
+                        ui.label(line);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&hardware.status).weak());
                 } else {
-                    for peer in &snapshot.peers {
-                        ui.horizontal(|ui| {
-                            let mark = if peer.connected { "●" } else { "○" };
-                            ui.label(format!("{mark} {}", peer.display_name));
-                        });
-                    }
+                    ui.label(RichText::new("Hardware report unavailable.").weak());
                 }
-                ui.add_space(12.0);
-                if snapshot.can_create_invitation {
-                    if primary_button(ui, "Add another PC").clicked() {
-                        self.send(UiCommand::CreateInvitation);
-                    }
+                ui.add_space(10.0);
+                if ui.button("Refresh hardware").clicked() {
+                    self.send(UiCommand::RefreshHardware);
                 }
             });
+        });
+
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading("Connected PCs");
+            ui.add_space(10.0);
+            if snapshot.peers.is_empty() {
+                ui.label(RichText::new("No peers connected yet.").weak());
+            } else {
+                for peer in &snapshot.peers {
+                    let mark = if peer.connected { "●" } else { "○" };
+                    ui.label(RichText::new(format!("{mark} {}", peer.display_name)).strong());
+                    if let Some(line) = &peer.hardware_line {
+                        ui.label(RichText::new(line).weak());
+                    }
+                    let link_view = mesh_core::LinkSummaryView::from_measurement(
+                        peer.link.as_ref(),
+                        mesh_core::now_unix_ms(),
+                    );
+                    kv(ui, "Delay", &link_view.delay_label());
+                    kv(ui, "To peer", &link_view.bandwidth_label("to"));
+                    kv(ui, "From peer", &link_view.bandwidth_label("from"));
+                    kv(
+                        ui,
+                        "Stability",
+                        &link_view
+                            .stability_score
+                            .map(|score| score.to_string())
+                            .unwrap_or_else(|| "unavailable".to_owned()),
+                    );
+                    ui.add_space(10.0);
+                }
+            }
+            if snapshot.can_create_invitation {
+                if primary_button(ui, "Add another PC").clicked() {
+                    self.send(UiCommand::CreateInvitation);
+                }
+            }
         });
 
         if let Some(invitation) = &snapshot.enrollment.invitation_text {

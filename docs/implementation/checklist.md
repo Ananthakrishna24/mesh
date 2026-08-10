@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01 is implemented on Linux; Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01 and P02 are implemented on Linux. A07 is accepted. Windows and macOS host proofs remain.
 
 ## Accepted baseline and locked contracts
 
@@ -118,14 +118,17 @@ Later quantization gate:
 
 ### A07 — Network benchmark and placement cost
 
-- [ ] Define directional delay tests.
-- [ ] Define directional bandwidth tests.
-- [ ] Define measurement age handling.
-- [ ] Define stability measurement and handling.
-- [ ] Define compute benchmarks.
-- [ ] Define pipeline cost.
-- [ ] Define rejection thresholds.
-- [ ] Define the maximum WAN stage count.
+- [x] Define directional delay tests.
+- [x] Define directional bandwidth tests.
+- [x] Define measurement age handling.
+- [x] Define stability measurement and handling.
+- [x] Define compute benchmarks.
+- [x] Define pipeline cost.
+- [x] Define rejection thresholds.
+- [x] Define the maximum WAN stage count.
+
+Canonical contract: [Network benchmark and placement cost](../architecture/networking/network-benchmark.md)
+Decision: [ADR-0012](../decisions/0012-network-benchmark-and-placement-cost.md)
 
 ### A08 — NAT and router integration
 
@@ -228,25 +231,27 @@ Proof:
 
 Prerequisites:
 
-- [ ] Resolve A07 network benchmark and placement cost before P03 begins.
+- [x] Resolve A07 network benchmark and placement cost before P03 begins.
 
 Build:
 
-- [ ] Implement CPU discovery.
-- [ ] Implement memory discovery.
-- [ ] Implement disk discovery.
+- [x] Implement CPU discovery.
+- [x] Implement memory discovery.
+- [x] Implement disk discovery.
 - [ ] Implement NVIDIA discovery through NVML on Windows.
-- [ ] Implement NVIDIA discovery through NVML on Linux.
+- [x] Implement NVIDIA discovery through NVML on Linux.
 - [ ] Implement Apple Metal discovery on macOS.
-- [ ] Implement capability reports.
-- [ ] Implement the directional network benchmark defined by A07.
-- [ ] Display hardware status in the GUI.
-- [ ] Display peer status in the GUI.
+  - Code path exists behind the `metal` feature; host proof deferred.
+- [x] Implement capability reports.
+- [x] Implement the directional network benchmark defined by A07.
+- [x] Display hardware status in the GUI.
+- [x] Display peer status in the GUI.
 
 Proof:
 
 - [ ] A Windows NVIDIA peer truthfully reports measured hardware and network capabilities.
-- [ ] A Linux NVIDIA peer truthfully reports measured hardware and network capabilities.
+- [x] A Linux NVIDIA peer truthfully reports measured hardware and network capabilities.
+  - Evidence: `cargo test -p mesh-hardware --lib` discovers CPU/memory/disk and NVML GPU on Linux RTX 4070 SUPER. `cargo test -p mesh-node two_nodes_enroll_over_localhost` exchanges capability reports and records directional delay plus bandwidth after enrollment. `cargo test -p mesh-net localhost_capability_and_bandwidth` passes.
 - [ ] A macOS Metal peer truthfully reports measured hardware and network capabilities.
 - [ ] P03 proof complete across all required peer types.
 

@@ -1,4 +1,5 @@
 mod error;
+mod hardware;
 mod ids;
 mod identity;
 pub mod invite;
@@ -7,6 +8,14 @@ pub mod protocol;
 mod ui;
 
 pub use error::{CoreError, CoreResult};
+pub use hardware::{
+    BANDWIDTH_REJECT_BPS, BandwidthMeasurement, CapabilityReport, ComputeProxy,
+    DEFAULT_BANDWIDTH_PAYLOAD_BYTES, DELAY_REJECT_ONE_WAY_MS, DelayMeasurement, GpuBackendKind,
+    GpuDeviceInfo, LinkMeasurement, MAX_BANDWIDTH_PAYLOAD_BYTES, MAX_WAN_PIPELINE_STAGES,
+    MEASUREMENT_FRESH_MS, MEASUREMENT_STALE_MS, MIN_BANDWIDTH_PAYLOAD_BYTES, MeasurementAgeState,
+    STABILITY_PIPELINE_MIN, age_bandwidth_bps, age_delay_ms, format_bits_per_second, format_bytes,
+    measurement_age_state, pipeline_hop_rejects, stability_score,
+};
 pub use ids::{EnrollmentId, MeshId, NodeId};
 pub use identity::{LocalIdentity, identity_matches};
 pub use invite::{
@@ -21,5 +30,6 @@ pub use protocol::{
     now_unix_ms, proto, random_message_id,
 };
 pub use ui::{
-    AppScreen, EnrollmentProgress, LocalNodeSummary, RuntimePhase, UiCommand, UiSnapshot,
+    AppScreen, EnrollmentProgress, HardwareSummaryView, LinkSummaryView, LocalNodeSummary,
+    RuntimePhase, UiCommand, UiSnapshot,
 };

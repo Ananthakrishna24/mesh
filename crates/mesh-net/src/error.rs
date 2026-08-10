@@ -9,6 +9,7 @@ pub enum NetError {
     Connection(quinn::ConnectionError),
     Write(quinn::WriteError),
     Read(quinn::ReadExactError),
+    ClosedStream(quinn::ClosedStream),
     Tls(String),
     Protocol(String),
     Identity(String),
@@ -25,6 +26,7 @@ impl Display for NetError {
             Self::Connection(error) => write!(f, "quic connection error: {error}"),
             Self::Write(error) => write!(f, "quic write error: {error}"),
             Self::Read(error) => write!(f, "quic read error: {error}"),
+            Self::ClosedStream(error) => write!(f, "quic stream closed: {error}"),
             Self::Tls(message) => write!(f, "tls error: {message}"),
             Self::Protocol(message) => write!(f, "protocol error: {message}"),
             Self::Identity(message) => write!(f, "identity error: {message}"),
@@ -64,6 +66,12 @@ impl From<quinn::WriteError> for NetError {
 impl From<quinn::ReadExactError> for NetError {
     fn from(value: quinn::ReadExactError) -> Self {
         Self::Read(value)
+    }
+}
+
+impl From<quinn::ClosedStream> for NetError {
+    fn from(value: quinn::ClosedStream) -> Self {
+        Self::ClosedStream(value)
     }
 }
 

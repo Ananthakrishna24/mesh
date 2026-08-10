@@ -133,6 +133,8 @@ It records directional delay, bandwidth, stability, and recent measurement time 
 
 **Rule:** placement uses measured links, not assumed internet speed.
 
+Canonical contract: [Network benchmark and placement cost](../networking/network-benchmark.md)
+
 ## M08 — Job Manager
 
 **Owns:** generic job creation and participation.

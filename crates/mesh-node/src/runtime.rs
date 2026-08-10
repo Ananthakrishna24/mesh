@@ -8,13 +8,15 @@ use mesh_core::invite::{
 };
 use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
-    AppScreen, CoreError, EndpointCandidate, EnrollmentId, EnrollmentProgress, LocalIdentity,
-    LocalNodeSummary, MeshId, NodeId, PeerRecord, PeerSummary, RuntimePhase, UiCommand, UiSnapshot,
-    now_unix_ms,
+    AppScreen, CapabilityReport, CoreError, EndpointCandidate, EnrollmentId, EnrollmentProgress,
+    HardwareSummaryView, LinkMeasurement, LocalIdentity, LocalNodeSummary, MeshId, NodeId,
+    PeerRecord, PeerSummary, RuntimePhase, UiCommand, UiSnapshot, now_unix_ms,
 };
+use mesh_hardware::discover_capabilities;
 use mesh_net::{
-    EnrollmentHello, IncomingPeer, MeshEndpoint, collect_local_candidates,
+    EnrollmentHello, IncomingPeer, MeshEndpoint, SessionEvent, collect_local_candidates,
     complete_inviter_handshake, generate_node_certificate, perform_joiner_handshake,
+    run_connected_session,
 };
 use mesh_store::{Store, StorePaths};
 use rand::RngCore;
@@ -53,6 +55,7 @@ struct RuntimeState {
     candidates: Vec<EndpointCandidate>,
     peers: HashMap<NodeId, PeerSummary>,
     known_peers: Vec<PeerRecord>,
+    hardware: Option<CapabilityReport>,
 }
 
 impl RuntimeState {
@@ -63,6 +66,7 @@ impl RuntimeState {
             candidates: Vec::new(),
             peers: HashMap::new(),
             known_peers: Vec::new(),
+            hardware: None,
         }
     }
 
@@ -102,6 +106,11 @@ impl RuntimeState {
         self.rebuild_peer_summaries();
     }
 
+    fn set_hardware(&mut self, report: CapabilityReport) {
+        self.snapshot.hardware = Some(HardwareSummaryView::from_report(&report));
+        self.hardware = Some(report);
+    }
+
     fn rebuild_peer_summaries(&mut self) {
         let mut peers = self.peers.values().cloned().collect::<Vec<_>>();
         peers.sort_by(|left, right| left.display_name.cmp(&right.display_name));
@@ -109,6 +118,7 @@ impl RuntimeState {
     }
 
     fn upsert_connected_peer(&mut self, peer: &PeerRecord, address: Option<SocketAddr>) {
+        let previous = self.peers.get(&peer.node_id).cloned();
         self.peers.insert(
             peer.node_id,
             PeerSummary {
@@ -116,6 +126,10 @@ impl RuntimeState {
                 display_name: peer.display_name.clone(),
                 connected: true,
                 address,
+                hardware_line: previous
+                    .as_ref()
+                    .and_then(|item| item.hardware_line.clone()),
+                link: previous.and_then(|item| item.link),
             },
         );
         if let Some(existing) = self
@@ -128,6 +142,20 @@ impl RuntimeState {
             self.known_peers.push(peer.clone());
         }
         self.rebuild_peer_summaries();
+    }
+
+    fn apply_peer_capability(&mut self, peer_node_id: NodeId, report: &CapabilityReport) {
+        if let Some(peer) = self.peers.get_mut(&peer_node_id) {
+            peer.hardware_line = Some(report.summary_line());
+            self.rebuild_peer_summaries();
+        }
+    }
+
+    fn apply_link_measurement(&mut self, peer_node_id: NodeId, measurement: LinkMeasurement) {
+        if let Some(peer) = self.peers.get_mut(&peer_node_id) {
+            peer.link = Some(measurement);
+            self.rebuild_peer_summaries();
+        }
     }
 }
 
@@ -176,6 +204,7 @@ enum RuntimeEvent {
     Incoming { incoming: IncomingPeer },
     PeerJoined { peer: PeerRecord, address: SocketAddr },
     PeerFailed { message: String },
+    Session(SessionEvent),
 }
 
 pub struct NodeRuntime {
@@ -197,7 +226,8 @@ impl NodeRuntime {
         let display_name = display_name.into();
         let store =
             Store::open(paths.clone()).map_err(|error| RuntimeError::Store(error.to_string()))?;
-        let state = RuntimeState::new(display_name);
+        let mut state = RuntimeState::new(display_name);
+        state.set_hardware(discover_capabilities());
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (snapshot_tx, snapshot_rx) = watch::channel(state.snapshot.clone());
         let (shutdown_tx, shutdown_rx) = broadcast::channel(EVENT_CAPACITY);
@@ -237,7 +267,9 @@ impl NodeRuntime {
             self.publish();
         } else if self.state.identity.is_none() {
             let name = self.state.snapshot.local.display_name.clone();
+            let hardware = self.state.snapshot.hardware.clone();
             self.state.snapshot = UiSnapshot::first_run(name);
+            self.state.snapshot.hardware = hardware;
             self.publish();
         }
 
@@ -335,7 +367,9 @@ impl NodeRuntime {
                     self.state.set_ready("Ready.");
                 } else {
                     let name = self.state.snapshot.local.display_name.clone();
+                    let hardware = self.state.snapshot.hardware.clone();
                     self.state.snapshot = UiSnapshot::first_run(name);
+                    self.state.snapshot.hardware = hardware;
                 }
                 self.publish();
                 false
@@ -358,6 +392,12 @@ impl NodeRuntime {
             UiCommand::ClearInvitation => {
                 self.state.snapshot.enrollment.invitation_text = None;
                 self.state.set_status("Invitation cleared.");
+                self.publish();
+                false
+            }
+            UiCommand::RefreshHardware => {
+                self.state.set_hardware(discover_capabilities());
+                self.state.set_status("Hardware report refreshed.");
                 self.publish();
                 false
             }
@@ -387,6 +427,32 @@ impl NodeRuntime {
             RuntimeEvent::PeerFailed { message } => {
                 warn!(%message, "peer task failed");
             }
+            RuntimeEvent::Session(session) => self.handle_session_event(session),
+        }
+    }
+
+    fn handle_session_event(&mut self, event: SessionEvent) {
+        match event {
+            SessionEvent::Capability {
+                peer_node_id,
+                report,
+            } => {
+                self.state.apply_peer_capability(peer_node_id, &report);
+                self.publish();
+            }
+            SessionEvent::Link {
+                peer_node_id,
+                measurement,
+            } => {
+                self.state.apply_link_measurement(peer_node_id, measurement);
+                self.publish();
+            }
+            SessionEvent::Failed {
+                peer_node_id,
+                message,
+            } => {
+                warn!(%peer_node_id, %message, "peer session failed");
+            }
         }
     }
 
@@ -400,8 +466,13 @@ impl NodeRuntime {
         let known_peers = self.state.known_peers.clone();
         let remote_address = incoming.remote_address;
         let connection = incoming.connection;
+        let hardware = self
+            .state
+            .hardware
+            .clone()
+            .unwrap_or_else(discover_capabilities);
 
-        let peer = complete_inviter_handshake(
+        let (peer, send, recv) = complete_inviter_handshake(
             &connection,
             &identity,
             &local_candidates,
@@ -419,10 +490,7 @@ impl NodeRuntime {
         self.state.snapshot.can_create_invitation = true;
         self.publish();
 
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            drop(connection);
-        });
+        self.spawn_session(identity, peer.node_id, connection, send, recv, hardware);
         Ok(())
     }
 
@@ -510,6 +578,11 @@ impl NodeRuntime {
             .as_mut()
             .ok_or_else(|| RuntimeError::Net("endpoint missing".to_owned()))?;
         let local_candidates = self.state.candidates.clone();
+        let hardware = self
+            .state
+            .hardware
+            .clone()
+            .unwrap_or_else(discover_capabilities);
 
         let mut last_error = RuntimeError::Net("no invitation candidates succeeded".to_owned());
         for candidate in candidates {
@@ -525,7 +598,7 @@ impl NodeRuntime {
                     )
                     .await
                     {
-                        Ok(welcome) => {
+                        Ok((welcome, send, recv)) => {
                             self.store
                                 .accept_enrollment_snapshot(
                                     &welcome.responder,
@@ -541,11 +614,14 @@ impl NodeRuntime {
                             self.state.push_step("Received the known PC list");
                             self.state.set_ready("This PC is ready.");
 
-                            let connection = peer_connection.connection;
-                            tokio::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                                drop(connection);
-                            });
+                            self.spawn_session(
+                                identity.clone(),
+                                welcome.responder.node_id,
+                                peer_connection.connection,
+                                send,
+                                recv,
+                                hardware.clone(),
+                            );
 
                             for peer in welcome.known_peers {
                                 if peer.node_id != welcome.responder.node_id {
@@ -641,11 +717,53 @@ impl NodeRuntime {
         });
     }
 
+    fn spawn_session(
+        &self,
+        identity: LocalIdentity,
+        peer_node_id: NodeId,
+        connection: quinn::Connection,
+        send: quinn::SendStream,
+        recv: quinn::RecvStream,
+        hardware: CapabilityReport,
+    ) {
+        let event_tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let (session_tx, mut session_rx) = mpsc::channel(EVENT_CAPACITY);
+            let forward = tokio::spawn(async move {
+                while let Some(event) = session_rx.recv().await {
+                    if event_tx
+                        .send(RuntimeEvent::Session(event))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            run_connected_session(
+                identity,
+                peer_node_id,
+                connection,
+                send,
+                recv,
+                hardware,
+                session_tx,
+            )
+            .await;
+            let _ = forward.await;
+        });
+    }
+
     fn spawn_reconnect(&self, peer: PeerRecord) {
         let Some(identity) = self.state.identity.clone() else {
             return;
         };
         let local_candidates = self.state.candidates.clone();
+        let hardware = self
+            .state
+            .hardware
+            .clone()
+            .unwrap_or_else(discover_capabilities);
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
@@ -674,19 +792,39 @@ impl NodeRuntime {
                     )
                     .await
                     {
-                        Ok(welcome) => {
+                        Ok((welcome, send, recv)) => {
                             let remote = connection.remote_address;
                             let keep = connection.connection;
                             let _ = event_tx
                                 .send(RuntimeEvent::PeerJoined {
-                                    peer: welcome.responder,
+                                    peer: welcome.responder.clone(),
                                     address: remote,
                                 })
                                 .await;
-                            tokio::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                                drop(keep);
+                            let (session_tx, mut session_rx) = mpsc::channel(EVENT_CAPACITY);
+                            let forward_tx = event_tx.clone();
+                            let forward = tokio::spawn(async move {
+                                while let Some(event) = session_rx.recv().await {
+                                    if forward_tx
+                                        .send(RuntimeEvent::Session(event))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
                             });
+                            run_connected_session(
+                                identity,
+                                welcome.responder.node_id,
+                                keep,
+                                send,
+                                recv,
+                                hardware,
+                                session_tx,
+                            )
+                            .await;
+                            let _ = forward.await;
                             return;
                         }
                         Err(error) => warn!(%error, "reconnect handshake failed"),
@@ -766,6 +904,7 @@ mod tests {
 
         wait_for(&inviter_handle, |snapshot| {
             snapshot.phase == RuntimePhase::AwaitingOnboarding
+                && snapshot.hardware.as_ref().is_some_and(|hw| hw.cpu_logical_cores >= 1)
         })
         .await;
         inviter_handle
@@ -815,6 +954,34 @@ mod tests {
             joiner_snapshot.local.mesh_id,
             inviter_snapshot.local.mesh_id
         );
+        assert!(
+            joiner_snapshot
+                .hardware
+                .as_ref()
+                .is_some_and(|hw| !hw.cpu_model.is_empty())
+        );
+
+        let measured = wait_for(&joiner_handle, |snapshot| {
+            snapshot.peers.iter().any(|peer| {
+                peer.link.as_ref().is_some_and(|link| {
+                    link.delay.is_some()
+                        && (link.to_peer_bandwidth.is_some() || link.from_peer_bandwidth.is_some())
+                })
+            })
+        })
+        .await;
+        let link = measured.peers[0]
+            .link
+            .as_ref()
+            .expect("link measurement present");
+        assert!(link.delay.as_ref().expect("delay").rtt_ms > 0.0);
+        assert!(
+            link.to_peer_bandwidth
+                .as_ref()
+                .or(link.from_peer_bandwidth.as_ref())
+                .is_some(),
+            "expected at least one bandwidth direction"
+        );
 
         inviter_handle.request_shutdown().ok();
         joiner_handle.request_shutdown().ok();
@@ -829,7 +996,7 @@ mod tests {
         predicate: impl Fn(&UiSnapshot) -> bool,
     ) -> UiSnapshot {
         let mut snapshots = handle.subscribe_snapshots();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             let snapshot = snapshots.borrow().clone();
             if predicate(&snapshot) {
