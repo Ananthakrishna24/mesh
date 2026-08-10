@@ -325,7 +325,7 @@ pub fn load_mesh_tokenizer(
     .map_err(EngineError::from)
 }
 
-fn locate_sidecar(
+pub(crate) fn locate_sidecar(
     cache_root: &Path,
     hf_repo_dir: Option<&Path>,
     repository: &str,

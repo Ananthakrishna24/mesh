@@ -8,6 +8,7 @@ pub mod protocol;
 mod resource;
 mod model;
 mod inference;
+mod activation;
 mod ui;
 
 pub use error::{CoreError, CoreResult};
@@ -52,12 +53,19 @@ pub use model::{
     is_full_commit_sha, manifest_cache_key, prepare_disk_margin, short_revision,
     volume_reserve_floor,
 };
+pub use activation::{
+    ActivationHeader, ActivationValidationError, TransferKind, ACTIVATION_BYTES_PER_FP16,
+    ACTIVATION_DTYPE_FP16, ACTIVATION_HEADER_BYTES, ACTIVATION_MAGIC,
+    ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST, ACTIVATION_MAX_PAYLOAD_BYTES, ACTIVATION_MAX_RANK,
+    ACTIVATION_WIRE_MAJOR, ACTIVATION_WIRE_MINOR,
+};
 pub use inference::{
     DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
     DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
-    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, ReplicaEndpointView, ReplicaHealth,
-    SamplingParams, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS, per_layer_kv_bytes,
-    request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
+    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, LayerRange, MAX_PIPELINE_STAGES,
+    NextTokenFeedback, PlacementPlan, ReplicaEndpointView, ReplicaHealth, SamplingParams,
+    StageAssignment, StageRole, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS,
+    per_layer_kv_bytes, request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
 };
 
 pub use ui::{

@@ -5,10 +5,10 @@ use mesh_core::protocol::proto::{
 };
 use mesh_core::{
     BandwidthMeasurement, CapabilityReport, DelayMeasurement, DeploymentId, EndpointCandidate,
-    InferenceRequestSpec, LinkMeasurement, LocalIdentity, NodeId, PeerRecord, RequestId,
-    ReservationCommit, ReservationRelease, ReserveAccepted, ReserveRejected, ReserveRequest,
-    ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms, random_message_id, PROTOCOL_MAJOR,
-    PROTOCOL_MINOR,
+    InferenceRequestSpec, LinkMeasurement, LocalIdentity, NextTokenFeedback, NodeId, PeerRecord,
+    RequestId, ReservationCommit, ReservationRelease, ReserveAccepted, ReserveRejected,
+    ReserveRequest, ResourceOffer, ResourceQuery, TokenResultEvent, now_unix_ms, random_message_id,
+    PROTOCOL_MAJOR, PROTOCOL_MINOR,
 };
 use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use quinn::{Connection, RecvStream, SendStream};
@@ -26,8 +26,9 @@ use crate::holepunch::{
 };
 use crate::inference::{
     ReplicaStatusMessage, build_cancel_request_envelope, build_inference_request_envelope,
-    build_replica_status_envelope, build_token_result_envelope, cancel_request_from_proto,
-    inference_request_from_proto, replica_status_from_proto, token_result_from_proto,
+    build_next_token_feedback_envelope, build_replica_status_envelope, build_token_result_envelope,
+    cancel_request_from_proto, inference_request_from_proto, next_token_feedback_from_proto,
+    replica_status_from_proto, token_result_from_proto,
 };
 use crate::reservation::{
     build_reservation_commit_envelope, build_reservation_release_envelope,
@@ -122,6 +123,10 @@ pub enum SessionEvent {
         request_id: RequestId,
         reason: String,
     },
+    NextTokenFeedback {
+        from_peer: NodeId,
+        feedback: NextTokenFeedback,
+    },
     Failed {
         peer_node_id: NodeId,
         message: String,
@@ -168,6 +173,7 @@ pub enum SessionCommand {
         request_id: RequestId,
         reason: String,
     },
+    SendNextTokenFeedback { feedback: NextTokenFeedback },
 }
 
 pub async fn run_connected_session(
@@ -424,6 +430,10 @@ async fn handle_session_command(
                 build_cancel_request_envelope(identity, deployment_id, request_id, reason);
             write_envelope(send, &envelope).await
         }
+        SessionCommand::SendNextTokenFeedback { feedback } => {
+            let envelope = build_next_token_feedback_envelope(identity, &feedback);
+            write_envelope(send, &envelope).await
+        }
     }
 }
 
@@ -634,6 +644,16 @@ async fn handle_peer_message(
                     deployment_id,
                     request_id,
                     reason,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::NextTokenFeedback(feedback)) => {
+            let feedback = next_token_feedback_from_proto(feedback)?;
+            let _ = events
+                .send(SessionEvent::NextTokenFeedback {
+                    from_peer: peer_node_id,
+                    feedback,
                 })
                 .await;
             Ok(())

@@ -19,8 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. Metal/Windows host proofs remain.
-
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU and CUDA host proofs. P08 replica routing/load/health is implemented with Linux dual-node remote generate evidence; dynamic batching and multi-replica concurrent proof remain. P09 foundation is implemented on Linux: activation frame, placement types, mesh-owned partial `Qwen3Stage`, in-process two-stage pipeline runtime with cancel/queue bounds, and CUDA two-stage==complete token match on Qwen3-4B. Multi-node QUIC activation path, concurrent pipeline sequences, and Qwen3-8B distributed proof remain. Metal/Windows host proofs remain.
 
 
 
@@ -48,7 +47,8 @@ Implement the locked contracts without introducing conflicting formats or identi
 - [x] Implement the [control protocol](../architecture/protocol/control-protocol.md): Protobuf through Prost, version `1.0`, fixed-length framing, and typed errors.
 - [x] Implement the [enrollment contract](../architecture/onboarding/enrollment-contract.md): certificate-derived Node IDs and exact self-contained invitation encoding.
 - [x] Implement [persistent state](../architecture/system/persistent-state.md): bundled SQLite and native provider credential stores.
-- [ ] Implement the [activation tensor frame](../architecture/protocol/activation-frame.md): fixed 128-byte header and contiguous little-endian FP16 payload.
+- [x] Implement the [activation tensor frame](../architecture/protocol/activation-frame.md): fixed 128-byte header and contiguous little-endian FP16 payload.
+  - Evidence: `mesh-core` encode/decode + `mesh-net` uni-stream read/write/validate; unit tests pass (`2026-08-10`).
 
 ## Architecture decision gates
 
@@ -452,19 +452,28 @@ Proof:
 
 Build:
 
-- [ ] Implement layer placement.
-- [ ] Implement partial stage loading.
-- [ ] Implement the accepted activation wire format.
-- [ ] Implement the pipeline stage runtime.
-- [ ] Implement final-stage sampling.
+- [x] Implement layer placement.
+  - Evidence: `PlacementPlan` / `StageRole` / `LayerRange` in `mesh-core`; `split_even` + validate unit tests (`2026-08-10`).
+- [x] Implement partial stage loading.
+  - Evidence: mesh-owned `Qwen3Stage` loads only assigned continuous layer range + role-owned embed/norm/lm_head (`2026-08-10`).
+- [x] Implement the accepted activation wire format.
+  - Evidence: 128-byte `ActivationHeader` encode/decode and `mesh-net` uni-stream frame I/O (`2026-08-10`).
+- [x] Implement the pipeline stage runtime.
+  - Evidence: in-process `PipelineEngine` prefill/decode across stages with FP16 activation handoff (`2026-08-10`).
+- [x] Implement final-stage sampling.
+  - Evidence: final stage owns logits + `Sampler`; greedy two-stage tokens match complete path on CUDA (`2026-08-10`).
 - [ ] Implement concurrent sequences.
-- [ ] Implement cancellation.
-- [ ] Implement queue bounds.
-- [ ] Implement backpressure.
+- [x] Implement cancellation.
+  - Evidence: `PipelineEngine::cancel` clears stage KV + inbound queues; request cancel checked each step (`2026-08-10`).
+- [x] Implement queue bounds.
+  - Evidence: per-stage inbound queue capacity = `ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST` (`2026-08-10`).
+- [x] Implement backpressure.
+  - Evidence: bounded queue rejects when full (`bounded_queue_rejects_over_capacity`) (`2026-08-10`).
 
 Proof:
 
 - [ ] The pinned Qwen3-8B model runs as continuous layer stages across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
+  - Linux in-process partial proof (Qwen3-4B two-stage == complete greedy tokens on CUDA): `MESH_P09_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke cargo test -p mesh-inference --lib --release --features cuda pipeline::tests::p09_two_stage_matches_complete_greedy -- --exact --nocapture` → `backend=cuda tokens=[9707, 0, 2585, 646] text="Hello! How can"` (`2026-08-10`). Multi-node QUIC activation path and Qwen3-8B remain.
 
 ### P10 — Failure and restart behavior
 

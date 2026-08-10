@@ -37,6 +37,7 @@ message ControlEnvelope {
     TokenResult token_result = 41;
     CancelRequest cancel_request = 42;
     ReplicaStatus replica_status = 43;
+    NextTokenFeedback next_token_feedback = 44;
 
     IntroductionOffer introduction_offer = 50;
     IntroductionReady introduction_ready = 51;
@@ -346,6 +347,14 @@ message CancelRequest {
   bytes deployment_id = 1;
   bytes request_id = 2;
   string reason = 3;
+}
+
+message NextTokenFeedback {
+  bytes deployment_id = 1;
+  bytes request_id = 2;
+  uint32 token_id = 3;
+  uint32 token_index = 4;
+  bool is_last = 5;
 }
 
 message ReplicaStatus {

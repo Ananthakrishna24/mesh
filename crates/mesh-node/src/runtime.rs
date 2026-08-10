@@ -1077,6 +1077,12 @@ impl NodeRuntime {
                     }
                 }
             }
+            SessionEvent::NextTokenFeedback {
+                from_peer,
+                feedback,
+            } => {
+                let _ = (from_peer, feedback);
+            }
             SessionEvent::Failed {
                 peer_node_id,
                 message,

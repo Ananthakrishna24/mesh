@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DeploymentId, RequestId};
+use crate::{DeploymentId, NodeId, RequestId};
 
 pub const FIRST_CONTEXT_LIMIT: u32 = 4096;
 pub const FIRST_MAX_CONCURRENT_REQUESTS: u32 = 1;
@@ -11,6 +11,8 @@ pub const DEFAULT_REPETITION_PENALTY: f32 = 1.0;
 pub const DEFAULT_MAX_NEW_TOKENS: u32 = 128;
 pub const WARMUP_MAX_NEW_TOKENS: u32 = 8;
 pub const KV_BYTES_PER_ELEMENT: u64 = 2;
+pub const MAX_PIPELINE_STAGES: usize = 3;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StopReason {
@@ -153,6 +155,15 @@ pub struct TokenResultEvent {
     pub sequence_length: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NextTokenFeedback {
+    pub deployment_id: DeploymentId,
+    pub request_id: RequestId,
+    pub token_id: u32,
+    pub token_index: u32,
+    pub is_last: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct InferenceView {
     pub phase: Option<InferencePhase>,
@@ -178,6 +189,195 @@ impl InferenceView {
             status_line: "Inference idle".to_owned(),
             ..Self::default()
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StageRole {
+    First,
+    Middle,
+    Final,
+    Complete,
+}
+
+impl StageRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::First => "first",
+            Self::Middle => "middle",
+            Self::Final => "final",
+            Self::Complete => "complete",
+        }
+    }
+
+    pub fn owns_embeddings(self) -> bool {
+        matches!(self, Self::First | Self::Complete)
+    }
+
+    pub fn owns_output_head(self) -> bool {
+        matches!(self, Self::Final | Self::Complete)
+    }
+
+    pub fn accepts_token_ids(self) -> bool {
+        self.owns_embeddings()
+    }
+
+    pub fn emits_logits(self) -> bool {
+        self.owns_output_head()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayerRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl LayerRange {
+    pub fn new(start: u32, end: u32) -> Result<Self, String> {
+        if start >= end {
+            return Err(format!("layer range start {start} must be < end {end}"));
+        }
+        Ok(Self { start, end })
+    }
+
+    pub fn len(self) -> u32 {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn contains(self, layer: u32) -> bool {
+        layer >= self.start && layer < self.end
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageAssignment {
+    pub stage_index: u16,
+    pub role: StageRole,
+    pub node_id: NodeId,
+    pub layer_range: LayerRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacementPlan {
+    pub deployment_id: DeploymentId,
+    pub model_line: String,
+    pub num_layers: u32,
+    pub stages: Vec<StageAssignment>,
+}
+
+impl PlacementPlan {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.stages.is_empty() {
+            return Err("placement requires at least one stage".to_owned());
+        }
+        if self.stages.len() > MAX_PIPELINE_STAGES {
+            return Err(format!(
+                "placement has {} stages; max is {MAX_PIPELINE_STAGES}",
+                self.stages.len()
+            ));
+        }
+        if self.num_layers == 0 {
+            return Err("placement num_layers must be > 0".to_owned());
+        }
+
+        let mut expected_start = 0u32;
+        for (index, stage) in self.stages.iter().enumerate() {
+            if stage.stage_index as usize != index {
+                return Err(format!(
+                    "stage_index {} must equal position {index}",
+                    stage.stage_index
+                ));
+            }
+            if stage.layer_range.start != expected_start {
+                return Err(format!(
+                    "stage {index} must start at layer {expected_start}, got {}",
+                    stage.layer_range.start
+                ));
+            }
+            if stage.layer_range.end > self.num_layers {
+                return Err(format!(
+                    "stage {index} end {} exceeds num_layers {}",
+                    stage.layer_range.end, self.num_layers
+                ));
+            }
+            expected_start = stage.layer_range.end;
+
+            let expected_role = if self.stages.len() == 1 {
+                StageRole::Complete
+            } else if index == 0 {
+                StageRole::First
+            } else if index + 1 == self.stages.len() {
+                StageRole::Final
+            } else {
+                StageRole::Middle
+            };
+            if stage.role != expected_role {
+                return Err(format!(
+                    "stage {index} role {:?} does not match expected {:?}",
+                    stage.role, expected_role
+                ));
+            }
+        }
+        if expected_start != self.num_layers {
+            return Err(format!(
+                "layers covered through {expected_start}, expected {}",
+                self.num_layers
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn split_even(
+        deployment_id: DeploymentId,
+        model_line: impl Into<String>,
+        num_layers: u32,
+        node_ids: &[NodeId],
+    ) -> Result<Self, String> {
+        if node_ids.is_empty() {
+            return Err("split_even requires at least one node".to_owned());
+        }
+        if node_ids.len() > MAX_PIPELINE_STAGES {
+            return Err(format!(
+                "split_even supports at most {MAX_PIPELINE_STAGES} stages"
+            ));
+        }
+        if num_layers < node_ids.len() as u32 {
+            return Err("num_layers must be >= stage count".to_owned());
+        }
+        let stage_count = node_ids.len() as u32;
+        let base = num_layers / stage_count;
+        let rem = num_layers % stage_count;
+        let mut stages = Vec::with_capacity(node_ids.len());
+        let mut start = 0u32;
+        for (index, node_id) in node_ids.iter().enumerate() {
+            let extra = if (index as u32) < rem { 1 } else { 0 };
+            let end = start + base + extra;
+            let role = if node_ids.len() == 1 {
+                StageRole::Complete
+            } else if index == 0 {
+                StageRole::First
+            } else if index + 1 == node_ids.len() {
+                StageRole::Final
+            } else {
+                StageRole::Middle
+            };
+            stages.push(StageAssignment {
+                stage_index: index as u16,
+                role,
+                node_id: *node_id,
+                layer_range: LayerRange::new(start, end)?,
+            });
+            start = end;
+        }
+        let plan = Self {
+            deployment_id,
+            model_line: model_line.into(),
+            num_layers,
+            stages,
+        };
+        plan.validate()?;
+        Ok(plan)
     }
 }
 
@@ -391,6 +591,49 @@ mod tests {
         .expect("route");
         assert_eq!(chosen.node_id, "cc");
         assert!(chosen.local);
+    }
+
+    #[test]
+    fn placement_split_even_two_stages() {
+        let a = NodeId::from_bytes([1; 32]);
+        let b = NodeId::from_bytes([2; 32]);
+        let plan = PlacementPlan::split_even(
+            DeploymentId::from_bytes([9; 16]),
+            "Qwen/Qwen3-4B",
+            36,
+            &[a, b],
+        )
+        .expect("plan");
+        assert_eq!(plan.stages.len(), 2);
+        assert_eq!(plan.stages[0].role, StageRole::First);
+        assert_eq!(plan.stages[0].layer_range, LayerRange { start: 0, end: 18 });
+        assert_eq!(plan.stages[1].role, StageRole::Final);
+        assert_eq!(plan.stages[1].layer_range, LayerRange { start: 18, end: 36 });
+        plan.validate().unwrap();
+    }
+
+    #[test]
+    fn placement_rejects_gap() {
+        let plan = PlacementPlan {
+            deployment_id: DeploymentId::from_bytes([1; 16]),
+            model_line: "x".into(),
+            num_layers: 4,
+            stages: vec![
+                StageAssignment {
+                    stage_index: 0,
+                    role: StageRole::First,
+                    node_id: NodeId::from_bytes([1; 32]),
+                    layer_range: LayerRange { start: 0, end: 1 },
+                },
+                StageAssignment {
+                    stage_index: 1,
+                    role: StageRole::Final,
+                    node_id: NodeId::from_bytes([2; 32]),
+                    layer_range: LayerRange { start: 2, end: 4 },
+                },
+            ],
+        };
+        assert!(plan.validate().unwrap_err().contains("must start at layer 1"));
     }
 
 }

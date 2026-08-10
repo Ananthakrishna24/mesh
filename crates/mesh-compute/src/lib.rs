@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+mod qwen3_stage;
+
 use std::path::{Path, PathBuf};
 
 use candle_core::{DType, Device, Tensor};
@@ -48,7 +50,7 @@ pub struct WeightFile {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct RawQwen3Config {
+pub(crate) struct RawQwen3Config {
     vocab_size: usize,
     hidden_size: usize,
     intermediate_size: usize,
@@ -200,7 +202,7 @@ impl LoadedQwen3 {
     }
 }
 
-fn select_device(prefer_cuda: bool) -> ComputeResult<(BackendKind, Device)> {
+pub(crate) fn select_device(prefer_cuda: bool) -> ComputeResult<(BackendKind, Device)> {
     if prefer_cuda {
         #[cfg(feature = "cuda")]
         {
@@ -224,7 +226,7 @@ fn select_device(prefer_cuda: bool) -> ComputeResult<(BackendKind, Device)> {
     Ok((BackendKind::Cpu, Device::Cpu))
 }
 
-fn logits_to_vec_f32(logits: &Tensor) -> ComputeResult<Vec<f32>> {
+pub(crate) fn logits_to_vec_f32(logits: &Tensor) -> ComputeResult<Vec<f32>> {
     let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
     let values = logits.to_vec1::<f32>()?;
     Ok(values)
@@ -258,6 +260,8 @@ pub fn group_complete_weight_files(
     files.sort_by(|left, right| left.artifact_path.cmp(&right.artifact_path));
     Ok(files)
 }
+
+pub use qwen3_stage::Qwen3Stage;
 
 pub fn crate_name() -> &'static str {
     "mesh-compute"

@@ -1,11 +1,12 @@
 use bytes::Bytes;
 use mesh_core::protocol::proto::{
     CancelRequest as ProtoCancel, ControlEnvelope, InferenceRequest as ProtoInferenceRequest,
-    ReplicaStatus as ProtoReplicaStatus, TokenResult as ProtoTokenResult, control_envelope::Body,
+    NextTokenFeedback as ProtoNextToken, ReplicaStatus as ProtoReplicaStatus,
+    TokenResult as ProtoTokenResult, control_envelope::Body,
 };
 use mesh_core::{
-    DeploymentId, InferenceRequestSpec, LocalIdentity, ReplicaEndpointView, RequestId,
-    SamplingParams, StopReason, TokenResultEvent, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    DeploymentId, InferenceRequestSpec, LocalIdentity, NextTokenFeedback, ReplicaEndpointView,
+    RequestId, SamplingParams, StopReason, TokenResultEvent, PROTOCOL_MAJOR, PROTOCOL_MINOR,
     random_message_id,
 };
 
@@ -127,6 +128,38 @@ pub fn build_cancel_request_envelope(
             reason: reason.into(),
         })),
     }
+}
+
+pub fn build_next_token_feedback_envelope(
+    identity: &LocalIdentity,
+    feedback: &NextTokenFeedback,
+) -> ControlEnvelope {
+    ControlEnvelope {
+        protocol_major: PROTOCOL_MAJOR,
+        protocol_minor: PROTOCOL_MINOR,
+        message_id: random_message_id(),
+        sender_node_id: identity.node_id.to_vec().into(),
+        in_reply_to: None,
+        body: Some(Body::NextTokenFeedback(ProtoNextToken {
+            deployment_id: Bytes::copy_from_slice(feedback.deployment_id.as_bytes()),
+            request_id: Bytes::copy_from_slice(feedback.request_id.as_bytes()),
+            token_id: feedback.token_id,
+            token_index: feedback.token_index,
+            is_last: feedback.is_last,
+        })),
+    }
+}
+
+pub fn next_token_feedback_from_proto(
+    feedback: ProtoNextToken,
+) -> NetResult<NextTokenFeedback> {
+    Ok(NextTokenFeedback {
+        deployment_id: deployment_id_from_bytes(&feedback.deployment_id)?,
+        request_id: request_id_from_bytes(&feedback.request_id)?,
+        token_id: feedback.token_id,
+        token_index: feedback.token_index,
+        is_last: feedback.is_last,
+    })
 }
 
 pub fn replica_status_from_proto(status: ProtoReplicaStatus) -> NetResult<ReplicaStatusMessage> {

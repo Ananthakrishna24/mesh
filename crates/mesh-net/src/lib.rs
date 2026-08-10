@@ -1,4 +1,5 @@
 mod benchmark;
+mod activation;
 mod candidates;
 mod endpoint;
 mod error;
@@ -38,10 +39,15 @@ pub use mapping::{
     MAPPING_BUDGET, MAPPING_LIFETIME_SECS, MappingProtocol, MappingResult, RouterMappingHandle,
     attempt_router_mapping, discover_ipv4_gateway_and_local,
 };
+pub use activation::{
+    send_activation_on_connection, validate_activation_for_request, write_activation_frame,
+    ActivationFrame, ActivationReceiveContext, read_activation_frame,
+};
 pub use inference::{
     ReplicaStatusMessage, build_cancel_request_envelope, build_inference_request_envelope,
-    build_replica_status_envelope, build_token_result_envelope, cancel_request_from_proto,
-    inference_request_from_proto, replica_status_from_proto, token_result_from_proto,
+    build_next_token_feedback_envelope, build_replica_status_envelope, build_token_result_envelope,
+    cancel_request_from_proto, inference_request_from_proto, next_token_feedback_from_proto,
+    replica_status_from_proto, token_result_from_proto,
 };
 pub use reservation::{
     build_reservation_commit_envelope, build_reservation_release_envelope,

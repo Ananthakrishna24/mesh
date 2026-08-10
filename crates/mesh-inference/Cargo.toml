@@ -12,6 +12,7 @@ cuda = ["mesh-compute/cuda"]
 metal = ["mesh-compute/metal"]
 
 [dependencies]
+candle-core = { workspace = true }
 mesh-compute = { workspace = true }
 mesh-core = { workspace = true }
 mesh-model = { workspace = true }
