@@ -87,5 +87,12 @@ reqwest = { version = "0.12.28", default-features = false, features = [
 ] }
 futures-util = "0.3.31"
 tokio-stream = "0.1.17"
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+rand_chacha = "0.9.0"
+safetensors = "0.4.5"
+candle-core = "0.11.0"
+candle-nn = "0.11.0"
+candle-transformers = "0.11.0"
+half = "2.6.0"
 
 

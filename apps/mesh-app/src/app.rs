@@ -9,6 +9,10 @@ pub struct MeshApp {
     display_name: String,
     invitation_input: String,
     hf_token_input: String,
+    prompt_input: String,
+    max_new_tokens: u32,
+    temperature: f32,
+    seed: u64,
     shutdown_sent: bool,
 }
 
@@ -23,6 +27,10 @@ impl MeshApp {
             display_name,
             invitation_input: String::new(),
             hf_token_input: String::new(),
+            prompt_input: "Say hello in one short sentence.".to_owned(),
+            max_new_tokens: 64,
+            temperature: 0.0,
+            seed: 1,
             shutdown_sent: false,
         }
     }
@@ -602,6 +610,99 @@ impl MeshApp {
                     self.hf_token_input.clear();
                 }
             });
+        });
+
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading("Inference");
+            ui.add_space(10.0);
+            let inference = &snapshot.inference;
+            kv(
+                ui,
+                "Phase",
+                inference
+                    .phase
+                    .map(|phase| phase.as_str())
+                    .unwrap_or("idle"),
+            );
+            kv(
+                ui,
+                "Model",
+                inference.model_line.as_deref().unwrap_or("none"),
+            );
+            kv(
+                ui,
+                "Backend",
+                inference.backend.as_deref().unwrap_or("—"),
+            );
+            kv(ui, "Status", &inference.status_line);
+            if let Some(error) = &inference.error {
+                ui.colored_label(Color32::from_rgb(180, 60, 60), error);
+            }
+            if !inference.output_text.is_empty() {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Output").strong());
+                ui.label(&inference.output_text);
+            }
+            if let Some(reason) = &inference.stop_reason {
+                kv(ui, "Stop", reason);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let can_load = !inference.busy
+                    && snapshot.models.last_prepare_summary.is_some()
+                    && snapshot.models.resolved_identity.is_some();
+                if ui
+                    .add_enabled(can_load, egui::Button::new("Load model"))
+                    .clicked()
+                {
+                    self.send(UiCommand::LoadSelectedModel);
+                }
+                if ui
+                    .add_enabled(
+                        !inference.busy && inference.model_line.is_some(),
+                        egui::Button::new("Unload"),
+                    )
+                    .clicked()
+                {
+                    self.send(UiCommand::UnloadModel);
+                }
+                if ui
+                    .add_enabled(inference.busy, egui::Button::new("Cancel generation"))
+                    .clicked()
+                {
+                    self.send(UiCommand::CancelGeneration);
+                }
+            });
+            ui.add_space(8.0);
+            ui.label(RichText::new("Prompt").weak());
+            ui.add(
+                egui::TextEdit::multiline(&mut self.prompt_input)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.horizontal(|ui| {
+                ui.label("max tokens");
+                ui.add(egui::DragValue::new(&mut self.max_new_tokens).range(1..=512));
+                ui.label("temperature");
+                ui.add(egui::DragValue::new(&mut self.temperature).range(0.0..=2.0).speed(0.05));
+                ui.label("seed");
+                ui.add(egui::DragValue::new(&mut self.seed));
+            });
+            if ui
+                .add_enabled(
+                    !inference.busy && inference.model_line.is_some(),
+                    egui::Button::new("Generate"),
+                )
+                .clicked()
+            {
+                self.send(UiCommand::Generate {
+                    prompt: self.prompt_input.clone(),
+                    max_new_tokens: self.max_new_tokens,
+                    temperature: self.temperature,
+                    seed: self.seed,
+                });
+            }
         });
 
         ui.add_space(16.0);

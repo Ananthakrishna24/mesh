@@ -11,6 +11,11 @@ default-run = "mesh"
 name = "mesh"
 path = "src/main.rs"
 
+[features]
+default = []
+cuda = ["mesh-node/cuda"]
+metal = ["mesh-node/metal"]
+
 [dependencies]
 mesh-core = { workspace = true }
 mesh-node = { workspace = true }

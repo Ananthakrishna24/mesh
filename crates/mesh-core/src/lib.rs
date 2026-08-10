@@ -7,7 +7,7 @@ mod peer;
 pub mod protocol;
 mod resource;
 mod model;
-
+mod inference;
 mod ui;
 
 pub use error::{CoreError, CoreResult};
@@ -19,7 +19,7 @@ pub use hardware::{
     STABILITY_PIPELINE_MIN, age_bandwidth_bps, age_delay_ms, format_bits_per_second, format_bytes,
     measurement_age_state, pipeline_hop_rejects, stability_score,
 };
-pub use ids::{DeploymentId, EnrollmentId, MeshId, NodeId, ReservationId};
+pub use ids::{DeploymentId, EnrollmentId, MeshId, NodeId, RequestId, ReservationId};
 pub use identity::{LocalIdentity, identity_matches};
 pub use invite::{
     INVITE_PREFIX, InvitationText, build_invite, candidates_from_proto, candidates_to_proto,
@@ -51,6 +51,13 @@ pub use model::{
     ProviderAccessReport, ProviderAccessStatus, ProviderAuthMode, RANGE_MERGE_GAP_BYTES,
     is_full_commit_sha, manifest_cache_key, prepare_disk_margin, short_revision,
     volume_reserve_floor,
+};
+pub use inference::{
+    DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
+    DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
+    InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, SamplingParams, StopReason,
+    TokenResultEvent, WARMUP_MAX_NEW_TOKENS, per_layer_kv_bytes, request_stage_kv_bytes,
+    stage_kv_reserve_bytes,
 };
 
 pub use ui::{

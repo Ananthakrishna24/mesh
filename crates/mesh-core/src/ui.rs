@@ -75,7 +75,7 @@ pub struct EnrollmentProgress {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UiCommand {
     CreateMesh { display_name: String },
     OpenEnrollment,
@@ -101,6 +101,10 @@ pub enum UiCommand {
     PrepareSelectedModel,
     CancelModelWork,
     ClearModelCache,
+    LoadSelectedModel,
+    UnloadModel,
+    Generate { prompt: String, max_new_tokens: u32, temperature: f32, seed: u64 },
+    CancelGeneration,
     Shutdown,
 }
 
@@ -216,10 +220,10 @@ pub struct UiSnapshot {
     pub hardware: Option<HardwareSummaryView>,
     pub resources: ResourceManagerView,
     pub models: ModelStoreView,
+    pub inference: crate::InferenceView,
     pub status_message: String,
     pub enrollment: EnrollmentProgress,
     pub can_create_invitation: bool,
-
 }
 
 impl UiSnapshot {
@@ -237,6 +241,7 @@ impl UiSnapshot {
             hardware: None,
             resources: ResourceManagerView::default(),
             models: ModelStoreView::default(),
+            inference: crate::InferenceView::idle(),
             status_message: "Starting local runtime…".to_owned(),
             enrollment: EnrollmentProgress {
                 steps: Vec::new(),

@@ -13,15 +13,16 @@ use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
     AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_CACHE_MAX_BYTES,
     DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress,
-    GpuResourceAmount, HardwareSummaryView, LinkMeasurement, LocalIdentity, LocalNodeSummary,
-    ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress, ModelReference, NodeId,
-    PeerRecord, PeerRecordOrigin, PeerSummary, ProviderAccessReport, ProviderAuthMode,
-    RecoveryAction, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest,
-    ResourceAmount, ResourceQuery, RuntimePhase, UiCommand, UiSnapshot,
-    filter_advertised_candidates, merge_peer_records, now_unix_ms, sort_candidates_for_dial,
+    GpuResourceAmount, HardwareSummaryView, InferencePhase, LinkMeasurement, LocalIdentity,
+    LocalNodeSummary, ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress,
+    ModelReference, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, ProviderAccessReport,
+    ProviderAuthMode, RecoveryAction, ReservationCommit, ReservationId, ReservationRelease,
+    ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams, UiCommand,
+    UiSnapshot, filter_advertised_candidates, merge_peer_records, now_unix_ms,
+    sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
-use mesh_inference::{LocalResourceManager, ReserveOutcome};
+use mesh_inference::{LocalResourceManager, ReserveOutcome, SingleNodeEngine};
 use mesh_model::{
     DownloadProgressEvent, HuggingFaceProvider, PrepareResult, ProgressSink, ResolvedModel,
     build_complete_plan, cleanup_incomplete, prepare_plan,
@@ -321,6 +322,12 @@ enum RuntimeEvent {
     ModelResolved(Result<ResolvedModel, String>),
     ModelPrepared(Result<PrepareResult, String>),
     ModelProgress(ModelDownloadProgress),
+    ModelLoaded(Result<Box<SingleNodeEngine>, String>),
+    GenerationFinished {
+        prompt: String,
+        engine: Box<SingleNodeEngine>,
+        result: Result<mesh_inference::GenerationOutput, String>,
+    },
 }
 
 struct LiveSession {
@@ -351,6 +358,9 @@ pub struct NodeRuntime {
     model_session_token: Option<String>,
     model_cancel: Option<watch::Sender<bool>>,
     resolved_model: Option<ResolvedModel>,
+    last_prepare: Option<PrepareResult>,
+    inference_engine: Option<SingleNodeEngine>,
+    generation_cancel: Option<watch::Sender<bool>>,
 }
 
 impl NodeRuntime {
@@ -407,6 +417,9 @@ impl NodeRuntime {
             model_session_token: None,
             model_cancel: None,
             resolved_model: None,
+            last_prepare: None,
+            inference_engine: None,
+            generation_cancel: None,
         })
     }
 
@@ -428,10 +441,12 @@ impl NodeRuntime {
             let hardware = self.state.snapshot.hardware.clone();
             let resources = self.state.snapshot.resources.clone();
             let models = self.state.snapshot.models.clone();
+            let inference = self.state.snapshot.inference.clone();
             self.state.snapshot = UiSnapshot::first_run(name);
             self.state.snapshot.hardware = hardware;
             self.state.snapshot.resources = resources;
             self.state.snapshot.models = models;
+            self.state.snapshot.inference = inference;
             self.publish();
         }
 
@@ -559,10 +574,12 @@ impl NodeRuntime {
                     let hardware = self.state.snapshot.hardware.clone();
                     let resources = self.state.snapshot.resources.clone();
                     let models = self.state.snapshot.models.clone();
+                    let inference = self.state.snapshot.inference.clone();
                     self.state.snapshot = UiSnapshot::first_run(name);
                     self.state.snapshot.hardware = hardware;
                     self.state.snapshot.resources = resources;
                     self.state.snapshot.models = models;
+                    self.state.snapshot.inference = inference;
                 }
                 self.publish();
                 false
@@ -733,6 +750,31 @@ impl NodeRuntime {
                 self.publish();
                 false
             }
+            UiCommand::LoadSelectedModel => {
+                self.spawn_model_load();
+                self.publish();
+                false
+            }
+            UiCommand::UnloadModel => {
+                self.unload_model();
+                self.publish();
+                false
+            }
+            UiCommand::Generate {
+                prompt,
+                max_new_tokens,
+                temperature,
+                seed,
+            } => {
+                self.spawn_generation(prompt, max_new_tokens, temperature, seed);
+                self.publish();
+                false
+            }
+            UiCommand::CancelGeneration => {
+                self.cancel_generation();
+                self.publish();
+                false
+            }
             UiCommand::Shutdown => true,
         }
     }
@@ -807,6 +849,14 @@ impl NodeRuntime {
             }
             RuntimeEvent::ModelProgress(progress) => {
                 self.state.snapshot.models.progress = Some(progress);
+                self.publish();
+            }
+            RuntimeEvent::ModelLoaded(result) => {
+                self.on_model_loaded(result);
+                self.publish();
+            }
+            RuntimeEvent::GenerationFinished { prompt, engine, result } => {
+                self.on_generation_finished(prompt, engine, result);
                 self.publish();
             }
         }
@@ -2231,11 +2281,195 @@ impl NodeRuntime {
                 self.state.snapshot.models.last_prepare_summary = Some(prepared.summary.clone());
                 self.state.snapshot.models.error = None;
                 self.state.snapshot.models.status_line = prepared.summary.clone();
-                self.state.set_status(prepared.summary);
+                self.state.set_status(prepared.summary.clone());
+                self.last_prepare = Some(prepared);
             }
             Err(error) => {
                 self.state.snapshot.models.error = Some(error.clone());
                 self.state.snapshot.models.status_line = "Model prepare failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
+    fn spawn_model_load(&mut self) {
+        let Some(resolved) = self.resolved_model.clone() else {
+            self.state.snapshot.inference.error =
+                Some("Probe/resolve the model before load.".to_owned());
+            self.state.snapshot.inference.status_line = "Model not resolved".to_owned();
+            return;
+        };
+        let Some(prepared) = self.last_prepare.clone() else {
+            self.state.snapshot.inference.error =
+                Some("Prepare downloads before load.".to_owned());
+            self.state.snapshot.inference.status_line = "Model not prepared".to_owned();
+            return;
+        };
+        if self.state.snapshot.inference.busy {
+            return;
+        }
+        let cache_root = self.paths.model_cache_dir.clone();
+        let event_tx = self.event_tx.clone();
+        self.state.snapshot.inference.busy = true;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Loading);
+        self.state.snapshot.inference.error = None;
+        self.state.snapshot.inference.status_line = "Loading model…".to_owned();
+        self.state.set_status("Loading model into compute backend…");
+        tokio::task::spawn_blocking(move || {
+            let deployment_id = DeploymentId::new();
+            let prefer_cuda = true;
+            let result = SingleNodeEngine::load(
+                deployment_id,
+                &resolved,
+                &prepared,
+                &cache_root,
+                prefer_cuda,
+                None,
+            )
+            .map(Box::new)
+            .map_err(|error| error.to_string());
+            let _ = event_tx.blocking_send(RuntimeEvent::ModelLoaded(result));
+        });
+    }
+
+    fn on_model_loaded(&mut self, result: Result<Box<SingleNodeEngine>, String>) {
+        self.state.snapshot.inference.busy = false;
+        match result {
+            Ok(engine) => {
+                let mut engine = *engine;
+                if let Err(error) = engine.warmup() {
+                    self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+                    self.state.snapshot.inference.error = Some(error.to_string());
+                    self.state.snapshot.inference.status_line = "Warm-up failed".to_owned();
+                    self.state.set_status(format!("Model warm-up failed: {error}"));
+                    return;
+                }
+                self.state.snapshot.inference = engine.view("", "", None);
+                self.state
+                    .set_status(format!("Model ready on {}.", engine.backend.as_str()));
+                self.inference_engine = Some(engine);
+            }
+            Err(error) => {
+                self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+                self.state.snapshot.inference.error = Some(error.clone());
+                self.state.snapshot.inference.status_line = "Model load failed".to_owned();
+                self.state.set_status(error);
+            }
+        }
+    }
+
+    fn unload_model(&mut self) {
+        if let Some(cancel) = self.generation_cancel.take() {
+            let _ = cancel.send(true);
+        }
+        self.inference_engine = None;
+        self.state.snapshot.inference = mesh_core::InferenceView::idle();
+        self.state.set_status("Unloaded model.");
+    }
+
+    fn spawn_generation(
+        &mut self,
+        prompt: String,
+        max_new_tokens: u32,
+        temperature: f32,
+        seed: u64,
+    ) {
+        if self.inference_engine.is_none() {
+            self.state.snapshot.inference.error = Some("Load a model before generating.".to_owned());
+            self.state.snapshot.inference.status_line = "No model loaded".to_owned();
+            return;
+        }
+        if self.state.snapshot.inference.busy {
+            return;
+        }
+        let Some(mut engine) = self.inference_engine.take() else {
+            return;
+        };
+        let params = SamplingParams {
+            temperature,
+            top_k: if temperature == 0.0 {
+                0
+            } else {
+                mesh_core::DEFAULT_TOP_K
+            },
+            top_p: if temperature == 0.0 {
+                1.0
+            } else {
+                mesh_core::DEFAULT_TOP_P
+            },
+            repetition_penalty: mesh_core::DEFAULT_REPETITION_PENALTY,
+            seed,
+            max_new_tokens: max_new_tokens.max(1),
+        };
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        self.generation_cancel = Some(cancel_tx);
+        self.state.snapshot.inference.busy = true;
+        self.state.snapshot.inference.phase = Some(InferencePhase::Generating);
+        self.state.snapshot.inference.prompt = prompt.clone();
+        self.state.snapshot.inference.output_text.clear();
+        self.state.snapshot.inference.error = None;
+        self.state.snapshot.inference.stop_reason = None;
+        self.state.snapshot.inference.status_line = "Generating…".to_owned();
+        self.state.set_status("Generating tokens…");
+        let event_tx = self.event_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = engine
+                .generate(&prompt, params, || !*cancel_rx.borrow())
+                .map_err(|error| error.to_string());
+            let _ = event_tx.blocking_send(RuntimeEvent::GenerationFinished {
+                prompt,
+                engine: Box::new(engine),
+                result,
+            });
+        });
+    }
+
+    fn cancel_generation(&mut self) {
+        if let Some(cancel) = self.generation_cancel.take() {
+            let _ = cancel.send(true);
+        }
+        self.state.snapshot.inference.status_line = "Cancelling generation…".to_owned();
+    }
+
+    fn on_generation_finished(
+        &mut self,
+        prompt: String,
+        engine: Box<SingleNodeEngine>,
+        result: Result<mesh_inference::GenerationOutput, String>,
+    ) {
+        self.generation_cancel = None;
+        self.inference_engine = Some(*engine);
+        self.state.snapshot.inference.busy = false;
+        self.state.snapshot.inference.prompt = prompt;
+        match result {
+            Ok(output) => {
+                self.state.snapshot.inference.phase = Some(InferencePhase::Ready);
+                self.state.snapshot.inference.output_text = output.text;
+                self.state.snapshot.inference.generated_tokens = output.tokens.len() as u32;
+                self.state.snapshot.inference.stop_reason =
+                    Some(output.stop_reason.as_str().to_owned());
+                self.state.snapshot.inference.last_token_id =
+                    output.tokens.last().map(|token| token.token_id);
+                self.state.snapshot.inference.error = None;
+                self.state.snapshot.inference.backend = self
+                    .inference_engine
+                    .as_ref()
+                    .map(|engine| engine.backend.as_str().to_owned());
+                self.state.snapshot.inference.model_line = self
+                    .inference_engine
+                    .as_ref()
+                    .map(|engine| engine.model_line.clone());
+                self.state.snapshot.inference.status_line = format!(
+                    "Completed · {} tokens · {}",
+                    output.tokens.len(),
+                    output.stop_reason.as_str()
+                );
+                self.state.set_status("Generation finished.");
+            }
+            Err(error) => {
+                self.state.snapshot.inference.phase = Some(InferencePhase::Failed);
+                self.state.snapshot.inference.error = Some(error.clone());
+                self.state.snapshot.inference.status_line = "Generation failed".to_owned();
                 self.state.set_status(error);
             }
         }

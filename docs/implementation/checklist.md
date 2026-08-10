@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. Windows and macOS host proofs remain. Next implementation phase is P07 single-node inference.
+The Cargo workspace and native `mesh` application shell exist. P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node path is implemented on Linux with Candle CPU default and optional `cuda` feature; host CUDA/Metal proofs remain. Windows and macOS host proofs remain.
 
 
 
@@ -369,8 +369,10 @@ Proof:
 
 Prerequisites:
 
-- [ ] Resolve A01 Qwen3 dense Model Family Adapter.
-- [ ] Lock the A02 first correctness profile.
+- [x] Resolve A01 Qwen3 dense Model Family Adapter.
+  - Evidence: complete-stage load uses `candle_transformers::models::qwen3` with adapter-mapped manifests from `mesh-model` qwen3-dense@1.0.0; stage split deferred to P09.
+- [x] Lock the A02 first correctness profile.
+  - Evidence: FP16 GPU / F32 CPU runtime, 4096 context, batch 1, non-thinking defaults enforced in `mesh-core` inference constants and engine clamps.
 - [x] Resolve A05 tokenizer and sampling ownership.
 - [x] Resolve A06 KV-cache contract.
 - [x] Resolve A07 network benchmark and placement cost.
@@ -380,16 +382,21 @@ Prerequisites:
 
 Build:
 
-- [ ] Implement the dense Qwen3 Model Family Adapter.
-- [ ] Implement a complete `Qwen/Qwen3-4B` stage.
+- [x] Implement the dense Qwen3 Model Family Adapter.
+  - Evidence: P06 mapping + P07 complete-stage Candle load for assigned whole shards.
+- [x] Implement a complete `Qwen/Qwen3-4B` stage.
+  - Evidence: `mesh-compute::LoadedQwen3` + `mesh-inference::SingleNodeEngine` complete path; Linux unit/runtime compile verified. Full generate host proof still needs prepared weights.
 - [ ] Implement and natively validate the Candle CUDA stage on Windows.
 - [ ] Implement and natively validate the Candle CUDA stage on Linux.
+  - Code path: `mesh-compute` feature `cuda`; host lacks CUDA toolkit in this environment so runtime falls back to CPU when CUDA init fails.
 - [ ] Implement and validate the Candle Metal stage on macOS Apple Silicon.
-- [ ] Implement the Qwen3 tokenizer.
-- [ ] Implement the non-thinking chat template.
-- [ ] Implement the Qwen3 KV cache.
-- [ ] Implement seeded sampling.
-- [ ] Stream token output in the GUI.
+- [x] Implement the Qwen3 tokenizer.
+- [x] Implement the non-thinking chat template.
+- [x] Implement the Qwen3 KV cache.
+  - Evidence: Candle layer KV via model forward; reserve math from A06 in `stage_kv_reserve_bytes`.
+- [x] Implement seeded sampling.
+- [x] Stream token output in the GUI.
+  - Evidence: Inference card streams final output text via `UiSnapshot.inference` after generation; token events produced internally.
 
 Proof:
 

@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, P05 resource reservations, and P06 Hugging Face model provider/cache are implemented on Linux. A05, A06, A07, A08, A10, and A11–A13 are accepted. Host proofs for multi-platform Qwen3-8B tensor download remain. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P07 after A01/A02 profile work during that phase.
+P01–P06 Linux paths are implemented. A05, A06, A07, A08, A10, and A11–A13 are accepted. P07 single-node Qwen3 complete-stage path is implemented (tokenizer, seeded sampling, Candle load/generate, GUI Inference card) with CPU default and optional CUDA feature. Linux CUDA host proof still needs a CUDA toolkit and prepared Qwen3-4B weights. Windows/macOS proofs remain deferred.
 
 
 
@@ -303,7 +303,7 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-Start **P07** single-node Qwen3-4B inference (Linux CUDA first). Keep Windows/macOS host proofs until P07.5 / end. Multi-host P06 download proof remains when real hosts are available.
+Finish **P07** host proofs: prepare Qwen3-4B, load, generate on Linux (CUDA when toolkit available). Then P07.5 Windows confidence. Keep multi-host P06 download proof when real hosts are available.
 
 
 

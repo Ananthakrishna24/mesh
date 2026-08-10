@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Active design |
-| Current phase | A05/A06 accepted; P07 single-node inference next |
+| Current phase | P07 single-node inference in progress; Linux path coded |
 | Implementation language | Rust |
 | First GPU targets | NVIDIA CUDA on Windows and Linux; Apple Metal on macOS |
 

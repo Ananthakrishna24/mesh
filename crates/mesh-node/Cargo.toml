@@ -6,8 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 description = "Node runtime composition and lifecycle"
 
+[features]
+default = []
+cuda = ["mesh-compute/cuda", "mesh-inference/cuda"]
+metal = ["mesh-compute/metal", "mesh-inference/metal"]
+
 [dependencies]
 bytes = { workspace = true }
+mesh-compute = { workspace = true }
 mesh-core = { workspace = true }
 mesh-hardware = { workspace = true }
 mesh-inference = { workspace = true }
