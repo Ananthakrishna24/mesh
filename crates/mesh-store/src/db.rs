@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mesh_core::{
-    EnrollmentId, InvitationRecord, InvitationState, LocalIdentity, MeshId, NodeId, PeerRecord,
-    identity_matches,
+    EnrollmentId, InvitationRecord, InvitationState, LocalIdentity, LocalReservation, MeshId,
+    NodeId, PeerRecord, ReservationId, identity_matches,
 };
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
@@ -11,7 +11,7 @@ use crate::paths::StorePaths;
 use crate::repos;
 use crate::{StoreError, StoreResult};
 
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 #[derive(Debug)]
 pub struct Store {
@@ -219,6 +219,46 @@ impl Store {
         Ok(())
     }
 
+    pub fn list_active_reservations(&self) -> StoreResult<Vec<LocalReservation>> {
+        let _ = repos::reservations::delete_expired(&self.conn, now_unix_ms())?;
+        repos::reservations::list_active(&self.conn, now_unix_ms())
+    }
+
+    pub fn upsert_reservation(&mut self, reservation: &LocalReservation) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        repos::reservations::upsert(&tx, reservation)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_reservation(&mut self, reservation_id: ReservationId) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        repos::reservations::delete(&tx, reservation_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_reservations_for_owner(&mut self, owner_node_id: NodeId) -> StoreResult<usize> {
+        let tx = self.conn.transaction()?;
+        let changed = repos::reservations::delete_owner(&tx, owner_node_id)?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn clear_reservations(&mut self) -> StoreResult<usize> {
+        let tx = self.conn.transaction()?;
+        let changed = repos::reservations::delete_all(&tx)?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn get_reservation(
+        &self,
+        reservation_id: ReservationId,
+    ) -> StoreResult<Option<LocalReservation>> {
+        repos::reservations::get(&self.conn, reservation_id)
+    }
+
     fn configure(&self) -> StoreResult<()> {
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
         self.conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -278,10 +318,24 @@ impl Store {
                     last_step TEXT NOT NULL
                 );
 
+                CREATE TABLE reservations (
+                    reservation_id BLOB PRIMARY KEY,
+                    deployment_id BLOB NOT NULL,
+                    owner_node_id BLOB NOT NULL,
+                    amount_json TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    expires_at_unix_ms INTEGER NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX idx_reservations_owner ON reservations(owner_node_id);
+                CREATE INDEX idx_reservations_expiry ON reservations(expires_at_unix_ms);
+
                 INSERT INTO onboarding (id, last_step) VALUES (1, 'not_enrolled');
                 "#,
             )?;
-            self.conn.pragma_update(None, "user_version", 2i32)?;
+            self.conn.pragma_update(None, "user_version", 3i32)?;
             return Ok(());
         }
 
@@ -312,6 +366,29 @@ impl Store {
                 params![now],
             )?;
             self.conn.pragma_update(None, "user_version", 2i32)?;
+        }
+
+        if version < 3 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS reservations (
+                    reservation_id BLOB PRIMARY KEY,
+                    deployment_id BLOB NOT NULL,
+                    owner_node_id BLOB NOT NULL,
+                    amount_json TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    expires_at_unix_ms INTEGER NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_reservations_owner
+                    ON reservations(owner_node_id);
+                CREATE INDEX IF NOT EXISTS idx_reservations_expiry
+                    ON reservations(expires_at_unix_ms);
+                "#,
+            )?;
+            self.conn.pragma_update(None, "user_version", 3i32)?;
         }
 
         Ok(())

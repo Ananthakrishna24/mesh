@@ -8,7 +8,7 @@
 
 ## Current state
 
-P01 shell, P02 enrollment, P03 Linux hardware/network discovery, and P04 automatic direct connectivity are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P05 resource reservations after remaining cross-platform proofs stay deferred.
+P01 shell, P02 enrollment, P03 Linux hardware/network discovery, P04 automatic direct connectivity, and P05 resource reservations are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain deferred to the end. Next implementation phase is P06 model provider and cache after A11–A13 are locked.
 
 
 Accepted areas:
@@ -298,5 +298,5 @@ Only measured bottlenecks justify advanced optimization.
 
 ## Next decision
 
-P04 is implemented. Keep Windows/macOS host proofs until the end. Implement P05 resource reservations next. Before P06/P07 inference work, lock A05, A06, and A11–A13.
+P05 is implemented. Keep Windows/macOS host proofs until the end. Before P06 model provider/cache work, lock A11–A13. Before P07 inference, also lock A05 and A06.
 

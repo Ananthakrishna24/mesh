@@ -418,6 +418,47 @@ impl MeshApp {
 
         ui.add_space(16.0);
         card(ui, |ui| {
+            ui.heading("Local resources");
+            ui.add_space(10.0);
+            kv(ui, "Capacity", &snapshot.resources.capacity_line);
+            kv(ui, "Available", &snapshot.resources.available_line);
+            ui.add_space(6.0);
+            if snapshot.resources.active.is_empty() {
+                ui.label(RichText::new("No active reservations.").weak());
+            } else {
+                ui.label(RichText::new("Active reservations").strong());
+                for item in &snapshot.resources.active {
+                    ui.label(format!(
+                        "{} · {} · {}",
+                        item.state.as_str(),
+                        item.purpose,
+                        item.amount_line
+                    ));
+                    ui.label(
+                        RichText::new(format!(
+                            "owner {} · deploy {} · expires {}",
+                            item.owner_node_id.short_hex(),
+                            item.deployment_id.short_hex(),
+                            item.expires_at_unix_ms
+                        ))
+                        .weak(),
+                    );
+                    ui.add_space(6.0);
+                }
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Probe local reservation").clicked() {
+                    self.send(UiCommand::RunLocalReservationProbe);
+                }
+                if ui.button("Release all").clicked() {
+                    self.send(UiCommand::ReleaseAllLocalReservations);
+                }
+            });
+        });
+
+        ui.add_space(16.0);
+        card(ui, |ui| {
             ui.heading("Connected PCs");
             ui.add_space(10.0);
             if snapshot.peers.is_empty() {

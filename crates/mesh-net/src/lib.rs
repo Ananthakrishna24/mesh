@@ -7,6 +7,7 @@ mod handshake;
 mod holepunch;
 mod identity;
 mod mapping;
+mod reservation;
 mod session;
 mod tls;
 
@@ -35,6 +36,11 @@ pub use identity::generate_node_certificate;
 pub use mapping::{
     MAPPING_BUDGET, MAPPING_LIFETIME_SECS, MappingProtocol, MappingResult, RouterMappingHandle,
     attempt_router_mapping, discover_ipv4_gateway_and_local,
+};
+pub use reservation::{
+    build_reservation_commit_envelope, build_reservation_release_envelope,
+    build_reserve_accepted_envelope, build_reserve_rejected_envelope,
+    build_reserve_request_envelope, build_resource_offer_envelope, build_resource_query_envelope,
 };
 pub use session::{SessionCommand, SessionEvent, run_connected_session};
 

@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 
 use crate::{
     CapabilityReport, LinkMeasurement, MeasurementAgeState, MeshId, NodeId, PeerSummary,
-    format_bits_per_second, format_bytes, measurement_age_state,
+    ResourceManagerView, format_bits_per_second, format_bytes, measurement_age_state,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +90,8 @@ pub enum UiCommand {
     ApplyManualPublicAddress,
     ShowFirewallHelp,
     HideFirewallHelp,
+    RunLocalReservationProbe,
+    ReleaseAllLocalReservations,
     Shutdown,
 }
 
@@ -203,6 +205,7 @@ pub struct UiSnapshot {
     pub local: LocalNodeSummary,
     pub peers: Vec<PeerSummary>,
     pub hardware: Option<HardwareSummaryView>,
+    pub resources: ResourceManagerView,
     pub status_message: String,
     pub enrollment: EnrollmentProgress,
     pub can_create_invitation: bool,
@@ -221,6 +224,7 @@ impl UiSnapshot {
             },
             peers: Vec::new(),
             hardware: None,
+            resources: ResourceManagerView::default(),
             status_message: "Starting local runtime…".to_owned(),
             enrollment: EnrollmentProgress {
                 steps: Vec::new(),
@@ -230,7 +234,6 @@ impl UiSnapshot {
                 recovery: None,
                 router_mapping_ok: None,
             },
-
             can_create_invitation: false,
         }
     }

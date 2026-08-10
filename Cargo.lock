@@ -2271,8 +2271,10 @@ dependencies = [
 name = "mesh-node"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "mesh-core",
  "mesh-hardware",
+ "mesh-inference",
  "mesh-net",
  "mesh-store",
  "quinn",

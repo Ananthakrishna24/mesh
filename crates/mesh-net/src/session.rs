@@ -1,11 +1,13 @@
+use bytes::Bytes;
 use mesh_core::protocol::proto::{
     BenchmarkDirection, BenchmarkKind, BenchmarkRequest, ControlEnvelope, IntroductionOffer,
     IntroductionReady, PeerObserve, PeerRecord as ProtoPeer, PeerUpdate, control_envelope::Body,
 };
 use mesh_core::{
     BandwidthMeasurement, CapabilityReport, DelayMeasurement, EndpointCandidate, LinkMeasurement,
-    LocalIdentity, NodeId, PeerRecord, now_unix_ms, random_message_id, PROTOCOL_MAJOR,
-    PROTOCOL_MINOR,
+    LocalIdentity, NodeId, PeerRecord, ReservationCommit, ReservationRelease, ReserveAccepted,
+    ReserveRejected, ReserveRequest, ResourceOffer, ResourceQuery, now_unix_ms, random_message_id,
+    PROTOCOL_MAJOR, PROTOCOL_MINOR,
 };
 use mesh_core::invite::{candidates_from_proto, candidates_to_proto};
 use quinn::{Connection, RecvStream, SendStream};
@@ -20,6 +22,14 @@ use crate::benchmark::{
 use crate::frame::{read_envelope, write_envelope};
 use crate::holepunch::{
     build_introduction_offer, build_introduction_ready, parse_socket_addr, peer_observed_candidate,
+};
+use crate::reservation::{
+    build_reservation_commit_envelope, build_reservation_release_envelope,
+    build_reserve_accepted_envelope, build_reserve_rejected_envelope,
+    build_reserve_request_envelope, build_resource_offer_envelope, build_resource_query_envelope,
+    reservation_commit_from_proto, reservation_release_from_proto, reserve_accepted_from_proto,
+    reserve_rejected_from_proto, reserve_request_from_proto, resource_offer_from_proto,
+    resource_query_from_proto,
 };
 use crate::{NetError, NetResult};
 
@@ -58,6 +68,36 @@ pub enum SessionEvent {
         address: std::net::SocketAddr,
         observed_at_unix_ms: i64,
     },
+    ResourceQuery {
+        from_peer: NodeId,
+        message_id: Bytes,
+        query: ResourceQuery,
+    },
+    ResourceOffer {
+        from_peer: NodeId,
+        offer: ResourceOffer,
+    },
+    ReserveRequest {
+        from_peer: NodeId,
+        message_id: Bytes,
+        request: ReserveRequest,
+    },
+    ReserveAccepted {
+        from_peer: NodeId,
+        accepted: ReserveAccepted,
+    },
+    ReserveRejected {
+        from_peer: NodeId,
+        rejected: ReserveRejected,
+    },
+    ReservationCommit {
+        from_peer: NodeId,
+        commit: ReservationCommit,
+    },
+    ReservationRelease {
+        from_peer: NodeId,
+        release: ReservationRelease,
+    },
     Failed {
         peer_node_id: NodeId,
         message: String,
@@ -80,6 +120,22 @@ pub enum SessionCommand {
         self_observed: std::net::SocketAddr,
         start_at_unix_ms: i64,
     },
+    SendResourceQuery { query: ResourceQuery },
+    SendResourceOffer {
+        offer: ResourceOffer,
+        in_reply_to: Option<Bytes>,
+    },
+    SendReserveRequest { request: ReserveRequest },
+    SendReserveAccepted {
+        accepted: ReserveAccepted,
+        in_reply_to: Option<Bytes>,
+    },
+    SendReserveRejected {
+        rejected: ReserveRejected,
+        in_reply_to: Option<Bytes>,
+    },
+    SendReservationCommit { commit: ReservationCommit },
+    SendReservationRelease { release: ReservationRelease },
 }
 
 pub async fn run_connected_session(
@@ -281,6 +337,40 @@ async fn handle_session_command(
             );
             write_envelope(send, &envelope).await
         }
+        SessionCommand::SendResourceQuery { query } => {
+            let envelope = build_resource_query_envelope(identity, &query);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendResourceOffer { offer, in_reply_to } => {
+            let envelope = build_resource_offer_envelope(identity, &offer, in_reply_to);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendReserveRequest { request } => {
+            let envelope = build_reserve_request_envelope(identity, &request);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendReserveAccepted {
+            accepted,
+            in_reply_to,
+        } => {
+            let envelope = build_reserve_accepted_envelope(identity, &accepted, in_reply_to);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendReserveRejected {
+            rejected,
+            in_reply_to,
+        } => {
+            let envelope = build_reserve_rejected_envelope(identity, &rejected, in_reply_to);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendReservationCommit { commit } => {
+            let envelope = build_reservation_commit_envelope(identity, &commit);
+            write_envelope(send, &envelope).await
+        }
+        SessionCommand::SendReservationRelease { release } => {
+            let envelope = build_reservation_release_envelope(identity, &release);
+            write_envelope(send, &envelope).await
+        }
     }
 }
 
@@ -380,6 +470,78 @@ async fn handle_peer_message(
         }
         Some(Body::PeerObserve(observe)) => {
             handle_peer_observe(peer_node_id, events, observe).await
+        }
+        Some(Body::ResourceQuery(query)) => {
+            let query = resource_query_from_proto(query)?;
+            let _ = events
+                .send(SessionEvent::ResourceQuery {
+                    from_peer: peer_node_id,
+                    message_id: envelope.message_id.clone(),
+                    query,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ResourceOffer(offer)) => {
+            let offer = resource_offer_from_proto(offer)?;
+            let _ = events
+                .send(SessionEvent::ResourceOffer {
+                    from_peer: peer_node_id,
+                    offer,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReserveRequest(request)) => {
+            let request = reserve_request_from_proto(request)?;
+            let _ = events
+                .send(SessionEvent::ReserveRequest {
+                    from_peer: peer_node_id,
+                    message_id: envelope.message_id.clone(),
+                    request,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReserveAccepted(accepted)) => {
+            let accepted = reserve_accepted_from_proto(accepted)?;
+            let _ = events
+                .send(SessionEvent::ReserveAccepted {
+                    from_peer: peer_node_id,
+                    accepted,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReserveRejected(rejected)) => {
+            let rejected = reserve_rejected_from_proto(rejected)?;
+            let _ = events
+                .send(SessionEvent::ReserveRejected {
+                    from_peer: peer_node_id,
+                    rejected,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReservationCommit(commit)) => {
+            let commit = reservation_commit_from_proto(commit)?;
+            let _ = events
+                .send(SessionEvent::ReservationCommit {
+                    from_peer: peer_node_id,
+                    commit,
+                })
+                .await;
+            Ok(())
+        }
+        Some(Body::ReservationRelease(release)) => {
+            let release = reservation_release_from_proto(release)?;
+            let _ = events
+                .send(SessionEvent::ReservationRelease {
+                    from_peer: peer_node_id,
+                    release,
+                })
+                .await;
+            Ok(())
         }
         Some(Body::Heartbeat(_)) | None => Ok(()),
         Some(other) => {

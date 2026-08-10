@@ -5,6 +5,7 @@ mod identity;
 pub mod invite;
 mod peer;
 pub mod protocol;
+mod resource;
 mod ui;
 
 pub use error::{CoreError, CoreResult};
@@ -16,7 +17,7 @@ pub use hardware::{
     STABILITY_PIPELINE_MIN, age_bandwidth_bps, age_delay_ms, format_bits_per_second, format_bytes,
     measurement_age_state, pipeline_hop_rejects, stability_score,
 };
-pub use ids::{EnrollmentId, MeshId, NodeId};
+pub use ids::{DeploymentId, EnrollmentId, MeshId, NodeId, ReservationId};
 pub use identity::{LocalIdentity, identity_matches};
 pub use invite::{
     INVITE_PREFIX, InvitationText, build_invite, candidates_from_proto, candidates_to_proto,
@@ -31,6 +32,13 @@ pub use peer::{
 pub use protocol::{
     MAX_CONTROL_FRAME_BYTES, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_MINOR_MIN, capability_digest,
     now_unix_ms, proto, random_message_id,
+};
+pub use resource::{
+    DEFAULT_COMMIT_LEASE_MS, DEFAULT_HOLD_LEASE_MS, GpuResourceAmount, LocalReservation, MAX_LEASE_MS,
+    MIN_LEASE_MS, OFFER_TTL_MS, ReservationCommit, ReservationRelease, ReservationState,
+    ReservationSummaryView, ReserveAccepted, ReserveRejected, ReserveRequest, ResourceAmount,
+    ResourceCapacity, ResourceManagerView, ResourceOffer, ResourceQuery, clamp_lease_ms,
+    current_time_ms, offer_expiry,
 };
 pub use ui::{
     AppScreen, ConnectivityRecovery, EnrollmentProgress, HardwareSummaryView, LinkSummaryView,

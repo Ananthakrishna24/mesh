@@ -19,7 +19,7 @@ The roadmap remains canonical. This checklist mirrors its work so progress can b
 
 ## Current state
 
-The Cargo workspace and native `mesh` application shell exist. P01–P03 Linux paths are implemented. P04 automatic direct connectivity is implemented on Linux. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
+The Cargo workspace and native `mesh` application shell exist. P01–P04 Linux paths are implemented. P05 local resource reservations are implemented. A07, A08, and A10 are accepted. Windows and macOS host proofs remain.
 
 
 ## Accepted baseline and locked contracts
@@ -29,7 +29,7 @@ Implementation must preserve the accepted system shape:
 - [x] Direct Quinn/QUIC peer connections.
 - [x] Decentralized peer topology.
 - [x] Native desktop onboarding.
-- [ ] Local resource reservations.
+- [x] Local resource reservations.
 - [ ] Single-node inference mode.
 - [ ] Replica inference mode.
 - [ ] Layer-pipeline inference mode.
@@ -292,19 +292,20 @@ Proof:
 
 Build:
 
-- [ ] Implement resource offers.
-- [ ] Implement expiring GPU leases.
-- [ ] Implement expiring memory leases.
-- [ ] Implement expiring disk leases.
-- [ ] Implement expiring execution leases.
-- [ ] Implement reservation commit.
-- [ ] Implement reservation release.
-- [ ] Handle concurrent coordinator conflicts.
-- [ ] Display reservation state in the GUI.
+- [x] Implement resource offers.
+- [x] Implement expiring GPU leases.
+- [x] Implement expiring memory leases.
+- [x] Implement expiring disk leases.
+- [x] Implement expiring execution leases.
+- [x] Implement reservation commit.
+- [x] Implement reservation release.
+- [x] Handle concurrent coordinator conflicts.
+- [x] Display reservation state in the GUI.
 
 Proof:
 
-- [ ] Prove two coordinators cannot reserve the same local capacity.
+- [x] Prove two coordinators cannot reserve the same local capacity.
+  - Evidence: `cargo test -p mesh-inference two_coordinators_cannot_reserve_same_capacity` rejects a second exclusive GPU hold. `cargo test -p mesh-node two_coordinators_cannot_reserve_same_local_capacity` proves the runtime/GUI path accepts one full-slot probe and rejects a second concurrent hold. Session wire handlers cover remote `ResourceQuery`/`ReserveRequest`/`Commit`/`Release`.
 
 ### P06 — Model provider and cache
 

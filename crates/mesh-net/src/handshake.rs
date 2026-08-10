@@ -120,6 +120,9 @@ pub fn build_error(
             retriable: false,
             summary: summary.into(),
             detail: detail.into(),
+            deployment_id: None,
+            request_id: None,
+            transfer_id: None,
         })),
     }
 }

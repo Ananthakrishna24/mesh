@@ -71,6 +71,10 @@ message ControlEnvelope {
     ReservationCommit reservation_commit = 25;
     ReservationRelease reservation_release = 26;
 
+    IntroductionOffer introduction_offer = 50;
+    IntroductionReady introduction_ready = 51;
+    PeerObserve peer_observe = 52;
+
     ModelPrepare model_prepare = 30;
     ModelProgress model_progress = 31;
     ModelReady model_ready = 32;

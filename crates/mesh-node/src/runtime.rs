@@ -5,18 +5,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use mesh_core::invite::{
     build_invite, candidates_from_proto, decode_invitation_text, encode_invitation_text,
 };
 use mesh_core::protocol::proto::ErrorCode;
 use mesh_core::{
-    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, EndpointCandidate,
-    EnrollmentId, EnrollmentProgress, HardwareSummaryView, LinkMeasurement, LocalIdentity,
-    LocalNodeSummary, ManualForwardingGuide, MeshId, NodeId, PeerRecord, PeerRecordOrigin,
-    PeerSummary, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot, filter_advertised_candidates,
-    merge_peer_records, now_unix_ms, sort_candidates_for_dial,
+    AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError, DEFAULT_HOLD_LEASE_MS,
+    DeploymentId, EndpointCandidate, EnrollmentId, EnrollmentProgress, GpuResourceAmount,
+    HardwareSummaryView, LinkMeasurement, LocalIdentity, LocalNodeSummary, ManualForwardingGuide,
+    MeshId, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, RecoveryAction, ReservationCommit,
+    ReservationId, ReservationRelease, ReserveRequest, ResourceAmount, ResourceQuery, RuntimePhase,
+    UiCommand, UiSnapshot, filter_advertised_candidates, merge_peer_records, now_unix_ms,
+    sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
+use mesh_inference::{LocalResourceManager, ReserveOutcome};
 use mesh_net::{
     EnrollmentHello, HOLE_PUNCH_WINDOW, IncomingPeer, MeshEndpoint, RouterMappingHandle,
     SessionCommand, SessionEvent, advertised_candidates, attempt_router_mapping,
@@ -27,7 +31,7 @@ use mesh_net::{
 };
 use mesh_store::{Store, StorePaths};
 use rand::RngCore;
-use tokio::sync::{Mutex, broadcast, mpsc, watch};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 const COMMAND_CAPACITY: usize = 64;
@@ -35,9 +39,9 @@ const EVENT_CAPACITY: usize = 64;
 const INVITE_TTL_MS: i64 = 30 * 60 * 1000;
 const PEER_UPDATE_COALESCE: Duration = Duration::from_secs(5);
 const SELF_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
+const RESERVATION_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const CANDIDATE_STAGGER: Duration = Duration::from_millis(250);
 const DIAL_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
-
 #[derive(Debug)]
 pub enum RuntimeError {
     Store(String),
@@ -301,6 +305,11 @@ pub struct NodeRuntime {
     paths: StorePaths,
     mapping: Option<RouterMappingHandle>,
     sessions: HashMap<NodeId, LiveSession>,
+    resources: LocalResourceManager,
+    pending_remote_reserves: HashMap<
+        ReservationId,
+        oneshot::Sender<Result<mesh_core::ReserveAccepted, mesh_core::ReserveRejected>>,
+    >,
     peer_update_dirty: bool,
     last_peer_update: Option<tokio::time::Instant>,
 }
@@ -311,7 +320,16 @@ impl NodeRuntime {
         let store =
             Store::open(paths.clone()).map_err(|error| RuntimeError::Store(error.to_string()))?;
         let mut state = RuntimeState::new(display_name);
-        state.set_hardware(discover_capabilities());
+        let hardware = discover_capabilities();
+        state.set_hardware(hardware.clone());
+        let restored = store
+            .list_active_reservations()
+            .map_err(|error| RuntimeError::Store(error.to_string()))?;
+        let resources = LocalResourceManager::restore(
+            mesh_core::ResourceCapacity::from_capability(&hardware),
+            restored,
+        );
+        state.snapshot.resources = resources.view();
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (snapshot_tx, snapshot_rx) = watch::channel(state.snapshot.clone());
         let (shutdown_tx, shutdown_rx) = broadcast::channel(EVENT_CAPACITY);
@@ -335,6 +353,8 @@ impl NodeRuntime {
             paths,
             mapping: None,
             sessions: HashMap::new(),
+            resources,
+            pending_remote_reserves: HashMap::new(),
             peer_update_dirty: false,
             last_peer_update: None,
         })
@@ -356,8 +376,10 @@ impl NodeRuntime {
         } else if self.state.identity.is_none() {
             let name = self.state.snapshot.local.display_name.clone();
             let hardware = self.state.snapshot.hardware.clone();
+            let resources = self.state.snapshot.resources.clone();
             self.state.snapshot = UiSnapshot::first_run(name);
             self.state.snapshot.hardware = hardware;
+            self.state.snapshot.resources = resources;
             self.publish();
         }
 
@@ -365,6 +387,8 @@ impl NodeRuntime {
         peer_update_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut self_refresh_tick = tokio::time::interval(SELF_REFRESH_INTERVAL);
         self_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut reservation_tick = tokio::time::interval(RESERVATION_SWEEP_INTERVAL);
+        reservation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -394,6 +418,9 @@ impl NodeRuntime {
                         self.refresh_local_candidates().await;
                         self.mark_peer_update_dirty();
                     }
+                }
+                _ = reservation_tick.tick() => {
+                    self.sweep_reservations();
                 }
                 shutdown = self.shutdown_rx.recv() => {
                     match shutdown {
@@ -478,8 +505,10 @@ impl NodeRuntime {
                 } else {
                     let name = self.state.snapshot.local.display_name.clone();
                     let hardware = self.state.snapshot.hardware.clone();
+                    let resources = self.state.snapshot.resources.clone();
                     self.state.snapshot = UiSnapshot::first_run(name);
                     self.state.snapshot.hardware = hardware;
+                    self.state.snapshot.resources = resources;
                 }
                 self.publish();
                 false
@@ -507,7 +536,10 @@ impl NodeRuntime {
                 false
             }
             UiCommand::RefreshHardware => {
-                self.state.set_hardware(discover_capabilities());
+                let report = discover_capabilities();
+                self.state.set_hardware(report.clone());
+                self.resources.refresh_capacity(&report);
+                self.publish_resources();
                 self.state.set_status("Hardware report refreshed.");
                 self.publish();
                 false
@@ -521,7 +553,8 @@ impl NodeRuntime {
                     }
                 } else {
                     self.refresh_local_candidates().await;
-                    self.state.set_status("Refreshed local connectivity candidates.");
+                    self.state
+                        .set_status("Refreshed local connectivity candidates.");
                 }
                 self.publish();
                 false
@@ -589,6 +622,20 @@ impl NodeRuntime {
                 if let Some(recovery) = self.state.snapshot.enrollment.recovery.as_mut() {
                     recovery.show_firewall_help = false;
                 }
+                self.publish();
+                false
+            }
+            UiCommand::RunLocalReservationProbe => {
+                if let Err(error) = self.run_local_reservation_probe() {
+                    self.state.set_status(error);
+                }
+                self.publish();
+                false
+            }
+            UiCommand::ReleaseAllLocalReservations => {
+                self.release_all_local_reservations();
+                self.state
+                    .set_status("Released all local resource reservations.");
                 self.publish();
                 false
             }
@@ -731,17 +778,73 @@ impl NodeRuntime {
                     let _ = self.store.upsert_peer(peer);
                 }
             }
+            SessionEvent::ResourceQuery {
+                from_peer,
+                message_id,
+                query,
+            } => {
+                self.handle_resource_query(from_peer, message_id, query)
+                    .await;
+            }
+            SessionEvent::ResourceOffer { from_peer, offer } => {
+                info!(
+                    %from_peer,
+                    can_satisfy = offer.can_satisfy,
+                    "received resource offer"
+                );
+            }
+            SessionEvent::ReserveRequest {
+                from_peer,
+                message_id,
+                request,
+            } => {
+                self.handle_reserve_request(from_peer, message_id, request)
+                    .await;
+            }
+            SessionEvent::ReserveAccepted {
+                from_peer,
+                accepted,
+            } => {
+                if let Some(tx) = self
+                    .pending_remote_reserves
+                    .remove(&accepted.reservation_id)
+                {
+                    let _ = tx.send(Ok(accepted));
+                } else {
+                    info!(%from_peer, "ignored unexpected reserve accepted");
+                }
+            }
+            SessionEvent::ReserveRejected {
+                from_peer,
+                rejected,
+            } => {
+                if let Some(tx) = self
+                    .pending_remote_reserves
+                    .remove(&rejected.reservation_id)
+                {
+                    let _ = tx.send(Err(rejected));
+                } else {
+                    info!(%from_peer, "ignored unexpected reserve rejected");
+                }
+            }
+            SessionEvent::ReservationCommit { from_peer, commit } => {
+                self.handle_reservation_commit(from_peer, commit);
+            }
+            SessionEvent::ReservationRelease { from_peer, release } => {
+                self.handle_reservation_release(from_peer, release);
+            }
             SessionEvent::Failed {
                 peer_node_id,
                 message,
             } => {
                 warn!(%peer_node_id, %message, "peer session failed");
                 self.sessions.remove(&peer_node_id);
+                self.release_owner_reservations(peer_node_id);
                 if let Some(peer) = self.state.peers.get_mut(&peer_node_id) {
                     peer.connected = false;
                     self.state.rebuild_peer_summaries();
-                    self.publish();
                 }
+                self.publish();
             }
         }
     }
@@ -1659,6 +1762,269 @@ impl NodeRuntime {
     fn publish(&self) {
         let _ = self.snapshot_tx.send(self.state.snapshot.clone());
     }
+
+    fn publish_resources(&mut self) {
+        self.state.snapshot.resources = self.resources.view();
+    }
+
+    fn sweep_reservations(&mut self) {
+        let expired = self.resources.expire_due(now_unix_ms());
+        if expired.is_empty() {
+            return;
+        }
+        for reservation in expired {
+            if let Err(error) = self.store.delete_reservation(reservation.reservation_id) {
+                warn!(%error, "failed to delete expired reservation");
+            }
+        }
+        self.publish_resources();
+        self.publish();
+    }
+
+    fn persist_reservation(&mut self, reservation: &mesh_core::LocalReservation) {
+        if let Err(error) = self.store.upsert_reservation(reservation) {
+            warn!(%error, "failed to persist reservation");
+        }
+        self.publish_resources();
+    }
+
+    fn delete_persisted_reservation(&mut self, reservation_id: ReservationId) {
+        if let Err(error) = self.store.delete_reservation(reservation_id) {
+            warn!(%error, "failed to delete reservation");
+        }
+        self.publish_resources();
+    }
+
+    fn release_owner_reservations(&mut self, owner_node_id: NodeId) {
+        let released = self.resources.release_owner(owner_node_id);
+        if released.is_empty() {
+            return;
+        }
+        if let Err(error) = self.store.delete_reservations_for_owner(owner_node_id) {
+            warn!(%error, "failed to clear owner reservations");
+        }
+        self.publish_resources();
+    }
+
+    fn release_all_local_reservations(&mut self) {
+        let _ = self.resources.release_all();
+        if let Err(error) = self.store.clear_reservations() {
+            warn!(%error, "failed to clear reservations");
+        }
+        self.publish_resources();
+    }
+
+    fn probe_amount_from_capacity(&self) -> ResourceAmount {
+        let available = self.resources.available_amount(now_unix_ms());
+        let gpus = available
+            .gpus
+            .into_iter()
+            .filter(|gpu| gpu.memory_bytes > 0)
+            .map(|gpu| GpuResourceAmount {
+                device_stable_id: gpu.device_stable_id,
+                memory_bytes: gpu.memory_bytes,
+            })
+            .collect::<Vec<_>>();
+        ResourceAmount {
+            system_memory_bytes: available
+                .system_memory_bytes
+                .min(64 * 1024 * 1024)
+                .max(if available.system_memory_bytes > 0 {
+                    1
+                } else {
+                    0
+                }),
+            disk_bytes: available.disk_bytes.min(128 * 1024 * 1024).max(
+                if available.disk_bytes > 0 { 1 } else { 0 },
+            ),
+            execution_slots: available.execution_slots.max(1),
+            gpus,
+        }
+    }
+
+    fn run_local_reservation_probe(&mut self) -> Result<(), String> {
+        let owner = self
+            .state
+            .identity
+            .as_ref()
+            .map(|identity| identity.node_id)
+            .unwrap_or_else(|| NodeId::from_bytes([0xEE; 32]));
+        let amount = self.probe_amount_from_capacity();
+        if amount.is_zero() {
+            return Err("no local capacity available for a probe reservation".to_owned());
+        }
+        let request = ReserveRequest {
+            deployment_id: DeploymentId::new(),
+            reservation_id: ReservationId::new(),
+            amount,
+            lease_duration_ms: DEFAULT_HOLD_LEASE_MS,
+            purpose: "local-probe".to_owned(),
+        };
+        match self.resources.reserve(owner, &request) {
+            ReserveOutcome::Accepted(accepted) => {
+                if let Some(reservation) = self
+                    .resources
+                    .active_reservations()
+                    .into_iter()
+                    .find(|item| item.reservation_id == accepted.reservation_id)
+                {
+                    self.persist_reservation(&reservation);
+                } else {
+                    self.publish_resources();
+                }
+                self.state.set_status(format!(
+                    "Reserved local capacity until {}.",
+                    accepted.expires_at_unix_ms
+                ));
+                Ok(())
+            }
+            ReserveOutcome::Rejected(rejected) => Err(rejected.reason),
+        }
+    }
+
+    async fn handle_resource_query(
+        &mut self,
+        from_peer: NodeId,
+        message_id: Bytes,
+        query: ResourceQuery,
+    ) {
+        let offer = self.resources.offer(&query);
+        self.publish_resources();
+        self.publish();
+        if let Some(session) = self.sessions.get(&from_peer) {
+            let _ = session
+                .commands
+                .send(SessionCommand::SendResourceOffer {
+                    offer,
+                    in_reply_to: Some(message_id),
+                })
+                .await;
+        }
+    }
+
+    async fn handle_reserve_request(
+        &mut self,
+        from_peer: NodeId,
+        message_id: Bytes,
+        request: ReserveRequest,
+    ) {
+        let outcome = self.resources.reserve(from_peer, &request);
+        match outcome {
+            ReserveOutcome::Accepted(accepted) => {
+                if let Some(reservation) = self
+                    .resources
+                    .active_reservations()
+                    .into_iter()
+                    .find(|item| item.reservation_id == accepted.reservation_id)
+                {
+                    self.persist_reservation(&reservation);
+                } else {
+                    self.publish_resources();
+                }
+                self.publish();
+                if let Some(session) = self.sessions.get(&from_peer) {
+                    let _ = session
+                        .commands
+                        .send(SessionCommand::SendReserveAccepted {
+                            accepted,
+                            in_reply_to: Some(message_id),
+                        })
+                        .await;
+                }
+            }
+            ReserveOutcome::Rejected(rejected) => {
+                self.publish_resources();
+                self.publish();
+                if let Some(session) = self.sessions.get(&from_peer) {
+                    let _ = session
+                        .commands
+                        .send(SessionCommand::SendReserveRejected {
+                            rejected,
+                            in_reply_to: Some(message_id),
+                        })
+                        .await;
+                }
+            }
+        }
+    }
+
+    fn handle_reservation_commit(&mut self, from_peer: NodeId, commit: ReservationCommit) {
+        match self.resources.commit(
+            from_peer,
+            commit.deployment_id,
+            commit.reservation_id,
+            commit.lease_duration_ms,
+        ) {
+            Ok(reservation) => {
+                self.persist_reservation(&reservation);
+                self.state.set_status(format!(
+                    "Committed reservation {}.",
+                    reservation.reservation_id.short_hex()
+                ));
+                self.publish();
+            }
+            Err(reason) => {
+                warn!(%from_peer, %reason, "reservation commit rejected");
+            }
+        }
+    }
+
+    fn handle_reservation_release(&mut self, from_peer: NodeId, release: ReservationRelease) {
+        match self.resources.release(
+            Some(from_peer),
+            Some(release.deployment_id),
+            release.reservation_id,
+        ) {
+            Ok(reservation) => {
+                self.delete_persisted_reservation(reservation.reservation_id);
+                self.state.set_status(format!(
+                    "Released reservation {} ({}).",
+                    reservation.reservation_id.short_hex(),
+                    if release.reason.is_empty() {
+                        "done"
+                    } else {
+                        release.reason.as_str()
+                    }
+                ));
+                self.publish();
+            }
+            Err(reason) => warn!(%from_peer, %reason, "reservation release ignored"),
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn reserve_on_peer(
+        &mut self,
+        peer_node_id: NodeId,
+        request: ReserveRequest,
+    ) -> Result<mesh_core::ReserveAccepted, String> {
+        let session = self
+            .sessions
+            .get(&peer_node_id)
+            .ok_or_else(|| format!("peer {peer_node_id} is not connected"))?;
+        let (tx, rx) = oneshot::channel();
+        self.pending_remote_reserves
+            .insert(request.reservation_id, tx);
+        session
+            .commands
+            .send(SessionCommand::SendReserveRequest {
+                request: request.clone(),
+            })
+            .await
+            .map_err(|_| "failed to send reserve request".to_owned())?;
+        match tokio::time::timeout(Duration::from_secs(10), rx).await {
+            Ok(Ok(Ok(accepted))) => Ok(accepted),
+            Ok(Ok(Err(rejected))) => Err(rejected.reason),
+            Ok(Err(_)) => {
+                self.pending_remote_reserves.remove(&request.reservation_id);
+                Err("reserve response channel closed".to_owned())
+            }
+            Err(_) => {
+                self.pending_remote_reserves.remove(&request.reservation_id);
+                Err("reserve request timed out".to_owned())
+            }
+        }
+    }
 }
 
 fn accept_enrollment(
@@ -1813,6 +2179,70 @@ mod tests {
         let _ = joiner_task.await;
         let _ = std::fs::remove_dir_all(&inviter_dir);
         let _ = std::fs::remove_dir_all(&joiner_dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_coordinators_cannot_reserve_same_local_capacity() {
+        let dir = std::env::temp_dir().join(format!("mesh-reserve-{}", now_unix_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let runtime =
+            NodeRuntime::create("Reserve PC", StorePaths::isolated(&dir)).expect("runtime");
+        let handle = runtime.handle();
+        let task = tokio::spawn(runtime.run());
+
+        wait_for(&handle, |snapshot| {
+            snapshot.phase == RuntimePhase::AwaitingOnboarding
+                && !snapshot.resources.capacity_line.is_empty()
+        })
+        .await;
+
+        handle
+            .send(UiCommand::CreateMesh {
+                display_name: "Reserve PC".to_owned(),
+            })
+            .await
+            .expect("create mesh");
+        wait_for(&handle, |snapshot| snapshot.phase == RuntimePhase::Ready).await;
+
+        handle
+            .send(UiCommand::RunLocalReservationProbe)
+            .await
+            .expect("first probe");
+        let first = wait_for(&handle, |snapshot| !snapshot.resources.active.is_empty()).await;
+        assert_eq!(first.resources.active.len(), 1);
+        assert!(first.status_message.contains("Reserved local capacity"));
+
+        handle
+            .send(UiCommand::RunLocalReservationProbe)
+            .await
+            .expect("second probe");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let second = handle.snapshot();
+        assert_eq!(
+            second.resources.active.len(),
+            1,
+            "second coordinator-style probe must not double-book local capacity: {:?}",
+            second.resources
+        );
+        assert!(
+            second.status_message.contains("execution slots")
+                || second.status_message.contains("exceed")
+                || second.status_message.contains("memory")
+                || !second.status_message.contains("Reserved local capacity"),
+            "expected rejection status, got {}",
+            second.status_message
+        );
+
+        handle
+            .send(UiCommand::ReleaseAllLocalReservations)
+            .await
+            .expect("release");
+        wait_for(&handle, |snapshot| snapshot.resources.active.is_empty()).await;
+
+        handle.request_shutdown().ok();
+        let _ = task.await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     async fn wait_for(

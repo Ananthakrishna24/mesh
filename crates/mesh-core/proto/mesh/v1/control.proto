@@ -19,12 +19,20 @@ message ControlEnvelope {
     BenchmarkAccept benchmark_accept = 17;
     BenchmarkReject benchmark_reject = 18;
     BenchmarkResult benchmark_result = 19;
-    IntroductionOffer introduction_offer = 20;
-    IntroductionReady introduction_ready = 21;
-    PeerObserve peer_observe = 22;
+
+    ResourceQuery resource_query = 20;
+    ResourceOffer resource_offer = 21;
+    ReserveRequest reserve_request = 22;
+    ReserveAccepted reserve_accepted = 23;
+    ReserveRejected reserve_rejected = 24;
+    ReservationCommit reservation_commit = 25;
+    ReservationRelease reservation_release = 26;
+
+    IntroductionOffer introduction_offer = 50;
+    IntroductionReady introduction_ready = 51;
+    PeerObserve peer_observe = 52;
   }
 }
-
 
 message Hello {
   bytes mesh_id = 1;
@@ -56,6 +64,9 @@ message ErrorMessage {
   bool retriable = 3;
   string summary = 4;
   string detail = 5;
+  optional bytes deployment_id = 6;
+  optional bytes request_id = 7;
+  optional uint64 transfer_id = 8;
 }
 
 enum ErrorCode {
@@ -191,6 +202,65 @@ enum BenchmarkDirection {
   FROM_PEER = 2;
 }
 
+message ResourceAmount {
+  uint64 system_memory_bytes = 1;
+  uint64 disk_bytes = 2;
+  uint32 execution_slots = 3;
+  repeated GpuResourceAmount gpus = 4;
+}
+
+message GpuResourceAmount {
+  string device_stable_id = 1;
+  uint64 memory_bytes = 2;
+}
+
+message ResourceQuery {
+  bytes deployment_id = 1;
+  ResourceAmount requested = 2;
+}
+
+message ResourceOffer {
+  bytes deployment_id = 1;
+  ResourceAmount available = 2;
+  ResourceAmount offered = 3;
+  bool can_satisfy = 4;
+  int64 offer_expires_at_unix_ms = 5;
+}
+
+message ReserveRequest {
+  bytes deployment_id = 1;
+  bytes reservation_id = 2;
+  ResourceAmount amount = 3;
+  uint64 lease_duration_ms = 4;
+  string purpose = 5;
+}
+
+message ReserveAccepted {
+  bytes deployment_id = 1;
+  bytes reservation_id = 2;
+  ResourceAmount reserved = 3;
+  int64 expires_at_unix_ms = 4;
+}
+
+message ReserveRejected {
+  bytes deployment_id = 1;
+  bytes reservation_id = 2;
+  string reason = 3;
+  ResourceAmount available = 4;
+}
+
+message ReservationCommit {
+  bytes deployment_id = 1;
+  bytes reservation_id = 2;
+  uint64 lease_duration_ms = 3;
+}
+
+message ReservationRelease {
+  bytes deployment_id = 1;
+  bytes reservation_id = 2;
+  string reason = 3;
+}
+
 message IntroductionOffer {
   bytes target_node_id = 1;
   bytes attempt_id = 2;
@@ -211,4 +281,3 @@ message PeerObserve {
   string address = 2;
   int64 observed_at_unix_ms = 3;
 }
-
