@@ -464,12 +464,12 @@ pub fn select_replica_route<'a>(
             Some(current) => {
                 let left = (
                     current.active_requests,
-                    u8::from(!current.local),
+                    u8::from(current.local),
                     current.node_id.as_str(),
                 );
                 let right = (
                     replica.active_requests,
-                    u8::from(!replica.local),
+                    u8::from(replica.local),
                     replica.node_id.as_str(),
                 );
                 if right < left { replica } else { current }
@@ -541,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn select_replica_route_prefers_least_loaded_local() {
+    fn select_replica_route_prefers_remote_when_load_is_equal() {
         let local_busy = ReplicaEndpointView {
             node_id: "aa".into(),
             display_name: "Local".into(),
@@ -586,8 +586,8 @@ mod tests {
             Some("Qwen/Qwen3-4B"),
         )
         .expect("route");
-        assert_eq!(chosen.node_id, "cc");
-        assert!(chosen.local);
+        assert_eq!(chosen.node_id, "bb");
+        assert!(!chosen.local);
     }
 
     #[test]

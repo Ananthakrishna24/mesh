@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use mesh_core::ModelIdentity;
@@ -30,6 +31,8 @@ pub struct ResolvedModel {
     pub identity: ModelIdentity,
     pub manifest: CanonicalManifest,
     pub artifacts: Vec<ArtifactRef>,
+    #[serde(skip, default)]
+    pub local_artifacts: BTreeMap<String, PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

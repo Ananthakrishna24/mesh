@@ -67,20 +67,10 @@ impl SingleNodeEngine {
             .collect::<Vec<_>>();
         let weight_files = group_complete_weight_files(cache_root, &prepared_files)?;
 
-        let config_path = locate_sidecar(
-            cache_root,
-            hf_tokenizer_path.and_then(|path| path.parent()),
-            &resolved.identity.repository,
-            &resolved.identity.revision,
-            "config.json",
-        )?;
-        let tokenizer_path = locate_sidecar(
-            cache_root,
-            hf_tokenizer_path.and_then(|path| path.parent()),
-            &resolved.identity.repository,
-            &resolved.identity.revision,
-            "tokenizer.json",
-        )?;
+        let config_path =
+            locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "config.json")?;
+        let tokenizer_path =
+            locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "tokenizer.json")?;
 
         let tokenizer = MeshTokenizer::load(
             &tokenizer_path,
@@ -310,19 +300,40 @@ pub fn load_mesh_tokenizer(
     resolved: &ResolvedModel,
     hf_tokenizer_path: Option<&Path>,
 ) -> Result<MeshTokenizer, EngineError> {
-    let tokenizer_path = locate_sidecar(
-        cache_root,
-        hf_tokenizer_path.and_then(|path| path.parent()),
-        &resolved.identity.repository,
-        &resolved.identity.revision,
-        "tokenizer.json",
-    )?;
+    let tokenizer_path =
+        locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "tokenizer.json")?;
     MeshTokenizer::load(
         &tokenizer_path,
         &resolved.identity.tokenizer_hash,
         QWEN3_EOS_TOKEN_ID,
     )
     .map_err(EngineError::from)
+}
+
+pub(crate) fn locate_resolved_sidecar(
+    cache_root: &Path,
+    resolved: &ResolvedModel,
+    hf_tokenizer_path: Option<&Path>,
+    file_name: &str,
+) -> Result<PathBuf, EngineError> {
+    if let Some(dir) = hf_tokenizer_path.and_then(Path::parent) {
+        let candidate = dir.join(file_name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    if let Some(path) = resolved.local_artifacts.get(file_name) {
+        if path.is_file() {
+            return Ok(path.clone());
+        }
+    }
+    locate_sidecar(
+        cache_root,
+        None,
+        &resolved.identity.repository,
+        &resolved.identity.revision,
+        file_name,
+    )
 }
 
 pub(crate) fn locate_sidecar(
@@ -386,4 +397,60 @@ pub(crate) fn locate_sidecar(
     Err(EngineError::Message(format!(
         "missing {file_name} for {repository}@{revision}; resolve/prepare the model first"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use mesh_core::{ModelFormat, ModelIdentity};
+    use mesh_model::{CanonicalManifest, ResolvedModel};
+
+    use super::*;
+
+    #[test]
+    fn resolved_local_sidecar_is_used_before_cache_layout_guesses() {
+        let root = std::env::temp_dir().join(format!("mesh-sidecar-{}", mesh_core::now_unix_ms()));
+        let snapshot = root.join("provider-cache").join("snapshot");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        let config_path = snapshot.join("config.json");
+        std::fs::write(&config_path, b"{}").unwrap();
+
+        let revision = "0123456789abcdef0123456789abcdef01234567".to_owned();
+        let identity = ModelIdentity {
+            provider: "huggingface".to_owned(),
+            repository: "fixture/model".to_owned(),
+            revision: revision.clone(),
+            manifest_hash: "aa".repeat(32),
+            model_format: ModelFormat::Safetensors,
+            quantization: None,
+            tokenizer_hash: "bb".repeat(32),
+        };
+        let resolved = ResolvedModel {
+            identity,
+            manifest: CanonicalManifest {
+                provider: "huggingface".to_owned(),
+                repository: "fixture/model".to_owned(),
+                revision,
+                adapter_id: "qwen3-dense".to_owned(),
+                adapter_version: "1.0.0".to_owned(),
+                model_format: ModelFormat::Safetensors,
+                quantization: None,
+                architecture: serde_json::json!({}),
+                tensors: Vec::new(),
+                artifacts: Vec::new(),
+                tokenizer_artifacts: vec!["tokenizer.json".to_owned()],
+                tokenizer_hash: "bb".repeat(32),
+                memory_estimate_bytes: 0,
+            },
+            artifacts: Vec::new(),
+            local_artifacts: BTreeMap::from([("config.json".to_owned(), config_path.clone())]),
+        };
+
+        let located =
+            locate_resolved_sidecar(&root.join("model-cache"), &resolved, None, "config.json")
+                .unwrap();
+        assert_eq!(located, config_path);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

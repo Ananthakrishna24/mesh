@@ -10,7 +10,7 @@ use mesh_core::{
 use mesh_model::{PrepareResult, ResolvedModel, materialize_stage_weight_files};
 use thiserror::Error;
 
-use crate::engine::locate_sidecar;
+use crate::engine::locate_resolved_sidecar;
 use crate::sampler::Sampler;
 use crate::tokenizer::MeshTokenizer;
 use crate::{EngineError, GenerationOutput};
@@ -122,14 +122,9 @@ impl StageWorker {
                 absolute_path,
             })
             .collect::<Vec<_>>();
-        let config_path = locate_sidecar(
-            cache_root,
-            hf_tokenizer_path.and_then(Path::parent),
-            &resolved.identity.repository,
-            &resolved.identity.revision,
-            "config.json",
-        )
-        .map_err(PipelineError::from)?;
+        let config_path =
+            locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "config.json")
+                .map_err(PipelineError::from)?;
         Self::load(
             stage_index,
             role,
@@ -420,22 +415,12 @@ impl PipelineEngine {
                 absolute_path,
             })
             .collect::<Vec<_>>();
-        let config_path = locate_sidecar(
-            cache_root,
-            hf_tokenizer_path.and_then(Path::parent),
-            &resolved.identity.repository,
-            &resolved.identity.revision,
-            "config.json",
-        )
-        .map_err(PipelineError::from)?;
-        let tokenizer_path = locate_sidecar(
-            cache_root,
-            hf_tokenizer_path.and_then(Path::parent),
-            &resolved.identity.repository,
-            &resolved.identity.revision,
-            "tokenizer.json",
-        )
-        .map_err(PipelineError::from)?;
+        let config_path =
+            locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "config.json")
+                .map_err(PipelineError::from)?;
+        let tokenizer_path =
+            locate_resolved_sidecar(cache_root, resolved, hf_tokenizer_path, "tokenizer.json")
+                .map_err(PipelineError::from)?;
         let tokenizer = MeshTokenizer::load(
             &tokenizer_path,
             &resolved.identity.tokenizer_hash,

@@ -353,11 +353,16 @@ impl HuggingFaceProvider {
                 });
             }
         }
+        let local_artifacts = BTreeMap::from([
+            ("config.json".to_owned(), config_path),
+            ("tokenizer.json".to_owned(), tokenizer_path),
+        ]);
 
         Ok(ResolvedModel {
             identity,
             manifest,
             artifacts,
+            local_artifacts,
         })
     }
 
@@ -465,8 +470,15 @@ impl HuggingFaceProvider {
                     revision,
                     relative_path.replace('/', "_")
                 ));
-                self.fetch_file_inner(repository, revision, relative_path, &tmp)
-                    .await?;
+                let mut ignore_progress = |_| {};
+                self.fetch_file_inner(
+                    repository,
+                    revision,
+                    relative_path,
+                    &tmp,
+                    &mut ignore_progress,
+                )
+                .await?;
                 let file = tokio::fs::read(&tmp).await?;
                 let _ = tokio::fs::remove_file(&tmp).await;
                 if file.len() < 8 {
@@ -558,12 +570,18 @@ impl HuggingFaceProvider {
         Ok(body)
     }
 
-    pub async fn fetch_file(&self, artifact: &ArtifactRef, destination: &Path) -> ModelResult<()> {
+    pub async fn fetch_file(
+        &self,
+        artifact: &ArtifactRef,
+        destination: &Path,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> ModelResult<()> {
         self.fetch_file_inner(
             &artifact.repository,
             &artifact.revision,
             &artifact.relative_path,
             destination,
+            on_progress,
         )
         .await
     }
@@ -574,6 +592,7 @@ impl HuggingFaceProvider {
         revision: &str,
         relative_path: &str,
         destination: &Path,
+        on_progress: &mut (dyn FnMut(u64) + Send),
     ) -> ModelResult<()> {
         if let Some(parent) = destination.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -597,9 +616,12 @@ impl HuggingFaceProvider {
         }
         let mut stream = response.bytes_stream();
         let mut file = tokio::fs::File::create(destination).await?;
+        let mut bytes_written = 0u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             file.write_all(&chunk).await?;
+            bytes_written = bytes_written.saturating_add(chunk.len() as u64);
+            on_progress(bytes_written);
         }
         file.flush().await?;
         Ok(())

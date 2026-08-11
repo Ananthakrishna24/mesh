@@ -30,6 +30,7 @@ use std::pin::Pin;
 const COMPLETE_SHARD_COVERAGE_NUM: u64 = 80;
 const COMPLETE_SHARD_COVERAGE_DEN: u64 = 100;
 const MAX_RANGE_ATTEMPTS: u32 = 3;
+const PROGRESS_REPORT_INTERVAL_BYTES: u64 = 8 * 1024 * 1024;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -38,6 +39,7 @@ pub trait FetchSource: Send + Sync {
         &'a self,
         artifact: &'a ArtifactRef,
         destination: &'a Path,
+        on_progress: &'a mut (dyn FnMut(u64) + Send),
     ) -> BoxFuture<'a, ModelResult<()>>;
 
     fn fetch_range<'a>(
@@ -51,8 +53,11 @@ impl FetchSource for HuggingFaceProvider {
         &'a self,
         artifact: &'a ArtifactRef,
         destination: &'a Path,
+        on_progress: &'a mut (dyn FnMut(u64) + Send),
     ) -> BoxFuture<'a, ModelResult<()>> {
-        Box::pin(async move { HuggingFaceProvider::fetch_file(self, artifact, destination).await })
+        Box::pin(async move {
+            HuggingFaceProvider::fetch_file(self, artifact, destination, on_progress).await
+        })
     }
 
     fn fetch_range<'a>(
@@ -552,7 +557,7 @@ pub fn net_disk_bytes_required(
         .iter()
         .chain(plan.global_tensors.iter())
     {
-        if let Some(entry) = find_covering_entry(entries, assignment) {
+        if let Some(entry) = find_covering_entry(entries, &plan.model, assignment) {
             if validate_entry_file(root, entry).unwrap_or(false) {
                 let covered = assignment
                     .absolute_end
@@ -566,12 +571,15 @@ pub fn net_disk_bytes_required(
 
 fn find_covering_entry<'a>(
     entries: &'a [ModelCacheEntry],
+    identity: &ModelIdentity,
     assignment: &TensorAssignment,
 ) -> Option<&'a ModelCacheEntry> {
     entries.iter().find(|entry| {
         entry.state == CacheValidationState::Valid
+            && entry.provider == identity.provider
+            && entry.repository == identity.repository
+            && entry.revision == identity.revision
             && entry.artifact_path == assignment.artifact_path
-            && entry.repository == entry.repository
             && match (entry.range_start, entry.range_end) {
                 (None, None) => true,
                 (Some(start), Some(end)) => {
@@ -601,7 +609,7 @@ pub async fn prepare_plan(
         .iter()
         .chain(plan.global_tensors.iter())
     {
-        if let Some(entry) = find_covering_entry(existing, assignment) {
+        if let Some(entry) = find_covering_entry(existing, &resolved.identity, assignment) {
             if validate_entry_file(cache_root, entry).unwrap_or(false) {
                 bytes_from_cache = bytes_from_cache.saturating_add(
                     assignment
@@ -771,7 +779,27 @@ async fn download_complete_artifact(
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        match provider.fetch_file(artifact, &partial).await {
+        let mut last_reported = 0u64;
+        let mut report = |bytes_done: u64| {
+            let reached_total = artifact
+                .size_bytes
+                .is_some_and(|bytes_total| bytes_done >= bytes_total);
+            if bytes_done.saturating_sub(last_reported) < PROGRESS_REPORT_INTERVAL_BYTES
+                && !reached_total
+            {
+                return;
+            }
+            last_reported = bytes_done;
+            progress.on_progress(DownloadProgressEvent {
+                progress: ModelDownloadProgress {
+                    artifact_path: artifact.relative_path.clone(),
+                    bytes_done,
+                    bytes_total: artifact.size_bytes,
+                    phase: "downloading".to_owned(),
+                },
+            });
+        };
+        match provider.fetch_file(artifact, &partial, &mut report).await {
             Ok(()) => break,
             Err(error) if attempt < MAX_RANGE_ATTEMPTS && is_transient(&error) => {
                 tokio::time::sleep(backoff_delay(attempt)).await;
@@ -1021,6 +1049,7 @@ mod tests {
     use super::*;
     use crate::manifest::{ArtifactRecord, CanonicalManifest, TensorRecord, TensorRole};
     use mesh_core::{ModelFormat, PROVIDER_HUGGINGFACE};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn complete_plan_hashes_stable() {
@@ -1083,6 +1112,7 @@ mod tests {
             identity,
             manifest,
             artifacts: Vec::new(),
+            local_artifacts: BTreeMap::new(),
         };
         let plan = build_complete_plan("deploy", &resolved).unwrap();
         assert_eq!(plan.first_layer, 0);
@@ -1173,6 +1203,7 @@ mod tests {
             identity,
             manifest,
             artifacts: vec![artifact.clone()],
+            local_artifacts: BTreeMap::new(),
         };
         (bytes, resolved.manifest.clone(), artifact, resolved)
     }
@@ -1254,6 +1285,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&root);
         let fetch = FixtureFetch {
             bytes: Bytes::from(bytes.clone()),
+            file_fetches: AtomicUsize::new(0),
+            range_supported: true,
         };
         let mut progress = NoopProgress;
         let result = prepare_plan(&fetch, &resolved, &plan, &root, &[], &mut progress)
@@ -1281,6 +1314,8 @@ mod tests {
 
     struct FixtureFetch {
         bytes: Bytes,
+        file_fetches: AtomicUsize,
+        range_supported: bool,
     }
 
     impl FetchSource for FixtureFetch {
@@ -1288,12 +1323,15 @@ mod tests {
             &'a self,
             _artifact: &'a ArtifactRef,
             destination: &'a Path,
+            on_progress: &'a mut (dyn FnMut(u64) + Send),
         ) -> BoxFuture<'a, ModelResult<()>> {
             Box::pin(async move {
                 if let Some(parent) = destination.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
+                self.file_fetches.fetch_add(1, Ordering::Relaxed);
                 std::fs::write(destination, &self.bytes)?;
+                on_progress(self.bytes.len() as u64);
                 Ok(())
             })
         }
@@ -1304,6 +1342,11 @@ mod tests {
             range: Range<u64>,
         ) -> BoxFuture<'a, ModelResult<Bytes>> {
             Box::pin(async move {
+                if !self.range_supported {
+                    return Err(ModelError::Unsupported(
+                        "fixture range support disabled".to_owned(),
+                    ));
+                }
                 let start = range.start as usize;
                 let end = range.end as usize;
                 if end > self.bytes.len() || start >= end {
@@ -1368,6 +1411,15 @@ mod tests {
         (bytes, manifest, artifact)
     }
 
+    #[derive(Default)]
+    struct RecordingProgress(Vec<ModelDownloadProgress>);
+
+    impl ProgressSink for RecordingProgress {
+        fn on_progress(&mut self, event: DownloadProgressEvent) {
+            self.0.push(event.progress);
+        }
+    }
+
     #[tokio::test]
     async fn prepare_uses_complete_shard_for_high_coverage() {
         let (bytes, manifest, artifact) = tiny_safetensors();
@@ -1376,14 +1428,17 @@ mod tests {
             identity: identity.clone(),
             manifest,
             artifacts: vec![artifact],
+            local_artifacts: BTreeMap::new(),
         };
         let plan = build_complete_plan("deploy-fixture", &resolved).unwrap();
         let root = std::env::temp_dir().join(format!("mesh-prep-{}", now_unix_ms()));
         let _ = std::fs::create_dir_all(&root);
         let fetch = FixtureFetch {
-            bytes: Bytes::from(bytes),
+            bytes: Bytes::from(bytes.clone()),
+            file_fetches: AtomicUsize::new(0),
+            range_supported: false,
         };
-        let mut progress = NoopProgress;
+        let mut progress = RecordingProgress::default();
         let result = prepare_plan(&fetch, &resolved, &plan, &root, &[], &mut progress)
             .await
             .expect("prepare");
@@ -1393,6 +1448,40 @@ mod tests {
         assert!(path.exists());
         let on_disk = std::fs::read(&path).unwrap();
         assert!(!on_disk.is_empty());
+        assert!(progress.0.iter().any(|event| {
+            event.phase == "downloading" && event.bytes_done == bytes.len() as u64
+        }));
+        assert_eq!(fetch.file_fetches.load(Ordering::Relaxed), 1);
+
+        let mut cached_progress = NoopProgress;
+        let cached = prepare_plan(
+            &fetch,
+            &resolved,
+            &plan,
+            &root,
+            &result.cache_entries,
+            &mut cached_progress,
+        )
+        .await
+        .expect("prepare from cache");
+        assert_eq!(cached.bytes_downloaded, 0);
+        assert!(cached.bytes_from_cache > 0);
+        assert_eq!(fetch.file_fetches.load(Ordering::Relaxed), 1);
+
+        let mut wrong_revision = result.cache_entries.clone();
+        wrong_revision[0].revision = "ffffffffffffffffffffffffffffffffffffffff".to_owned();
+        let downloaded_again = prepare_plan(
+            &fetch,
+            &resolved,
+            &plan,
+            &root,
+            &wrong_revision,
+            &mut cached_progress,
+        )
+        .await
+        .expect("prepare with mismatched cache identity");
+        assert!(downloaded_again.bytes_downloaded > 0);
+        assert_eq!(fetch.file_fetches.load(Ordering::Relaxed), 2);
         let _ = std::fs::remove_dir_all(root);
     }
 }

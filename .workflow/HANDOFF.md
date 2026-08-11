@@ -14,6 +14,8 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Completed but uncommitted: stage-filtered prepare/load, mesh-app central-panel scrolling, and the cross-network endpoint correction.
 - Endpoint correction details: `MeshEndpoint::bind_wildcard` creates an IPv6 dual-stack UDP socket with IPv4 fallback; candidate collection advertises only address families supported by the bound endpoint.
 - Current verification: `cargo test -p mesh-net --lib` (12 passed), `cargo test -p mesh-node --lib runtime::tests::two_nodes_enroll_over_localhost -- --exact --nocapture` (1 passed), and `cargo check --workspace` (OK).
+- Additional completed but uncommitted fixes for the reported two-PC model flow: cache reuse now matches provider/repository/revision and avoids re-downloading valid weights; streamed byte progress updates the download UI; resolved `config.json`/`tokenizer.json` paths are retained so clean Windows/Linux hosts can load after resolve/prepare; equal-load replica routing prefers an available remote node over local.
+- Bug-fix files touched: `crates/mesh-core/src/inference.rs`, `crates/mesh-inference/src/engine.rs`, `crates/mesh-inference/src/pipeline.rs`, `crates/mesh-model/src/download.rs`, `crates/mesh-model/src/huggingface.rs`, and `crates/mesh-model/src/provider.rs`.
 
 # Decisions
 - Phases remain serial for roadmap proof gates; Linux implementation may continue while Windows/Metal host proofs wait.
