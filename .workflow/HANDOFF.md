@@ -5,39 +5,36 @@ Design an extendable decentralized hardware mesh architecture for direct GPU com
 - Architecture docs and locked contracts through A11–A13; A05/A06 (`b3b4509`, `3e6e96a`).
 - P01–P06 Linux paths (through `218e5de`).
 - P07 single-node Linux CPU (`aa79a97`, `ebe19d8`) and CUDA (`c49ad72`) proofs.
-- P08 full-model replica routing (`39b82e4`); handoff refresh (`70b2ab0`).
-- P09 foundation and in-process pipeline (`425bb5d`).
-- P09 multi-node QUIC activation path (`65febfb`).
+- P08 full-model replica routing (`39b82e4`); P09 foundation, activation runtime, and multi-node QUIC path (`425bb5d`, `65febfb`).
+- Model cache reuse, byte progress, sidecar retention, and remote-first equal-load routing (`6909540`).
+- Added mesh-app two-PC pipeline controls: shared deployment ID, connected-peer selection, local First/Final role, runtime-derived layer placement, and central-panel scrolling (`8b6e48e`).
+- Added two concurrent pipeline slots with request-scoped KV caches, request/transfer-ordered bounded queues, independent cancellation/cleanup, and runtime slot reporting (`e401ba6`).
+- Verification for `e401ba6`: `cargo test --workspace` (63 passed); CUDA interleaved proof produced `A=[9707, 0, 2585]`, `B=[6033, 13, 151645]`; dual-node QUIC concurrent proof produced `"Hello! How can"` and `"Red."`.
 
 # In progress
-- Nothing is mid-edit. The working tree is ready for normal P09 implementation.
-- Completed but uncommitted: stage-filtered prepare/load, mesh-app central-panel scrolling, and the cross-network endpoint correction.
-- Endpoint correction details: `MeshEndpoint::bind_wildcard` creates an IPv6 dual-stack UDP socket with IPv4 fallback; candidate collection advertises only address families supported by the bound endpoint.
-- Current verification: `cargo test -p mesh-net --lib` (12 passed), `cargo test -p mesh-node --lib runtime::tests::two_nodes_enroll_over_localhost -- --exact --nocapture` (1 passed), and `cargo check --workspace` (OK).
-- Additional completed but uncommitted fixes for the reported two-PC model flow: cache reuse now matches provider/repository/revision and avoids re-downloading valid weights; streamed byte progress updates the download UI; resolved `config.json`/`tokenizer.json` paths are retained so clean Windows/Linux hosts can load after resolve/prepare; equal-load replica routing prefers an available remote node over local.
-- Bug-fix files touched: `crates/mesh-core/src/inference.rs`, `crates/mesh-inference/src/engine.rs`, `crates/mesh-inference/src/pipeline.rs`, `crates/mesh-model/src/download.rs`, `crates/mesh-model/src/huggingface.rs`, and `crates/mesh-model/src/provider.rs`.
+- Qwen3-8B distributed proof is blocked on a second directly connected model-capable PC. This workstation alone has a 12 GB RTX 4070 SUPER and 24.6 GB available RAM; co-locating both 8B FP16 stages exceeds VRAM and does not satisfy the two-PC proof.
+- Working tree is clean before this handoff refresh.
 
 # Decisions
-- Phases remain serial for roadmap proof gates; Linux implementation may continue while Windows/Metal host proofs wait.
-- Runtime endpoints prefer one IPv6 wildcard socket with `IPV6_V6ONLY=false`, matching Quinn's recommended dual-stack client strategy. If the platform cannot create that socket, fall back to IPv4 and suppress IPv6 candidates rather than advertising unreachable addresses.
-- Keep explicit `MeshEndpoint::bind` for address-specific tests/callers; use `bind_wildcard` for the application endpoint.
-- Candidate families derive from the listen address: IPv4 bind advertises IPv4 only, IPv6 wildcard advertises IPv4 and IPv6, specific IPv6 bind advertises IPv6 only.
-- No relay server was added. If neither IPv6 nor router/manual forwarding is available, CGNAT-to-CGNAT peers can still have no direct route.
-- Candle remains 0.11 with mesh-owned partial Qwen3 stages; CUDA/Metal use FP16 and CPU uses F32. P08 uses whole-model replicas; P09 uses stage assignments.
-- Stage preparation remains assignment-filtered; the complete replica path still uses whole shards.
+- Pipeline stages support two concurrent requests; complete-model replicas remain at one request because `SingleNodeEngine` is moved into one blocking generation task.
+- KV caches, sequence lengths, inbound activation queues, and transfer counters are request-scoped. Cancelling or finishing one request never clears another request's state.
+- Inbound activations are buffered per request and released by transfer ID; stale, duplicate, over-capacity, and wrong sequence-position frames fail the request.
+- `LoadPipelineStage` now accepts only deployment ID, local stage index, and ordered node IDs. Runtime derives repository, layer count, role, and layer range from the resolved manifest and `PlacementPlan::split_even`; redundant UI-supplied assignment data was removed.
+- The two-PC UI uses the same deployment ID on both PCs. Choosing First orders `[local, peer]`; choosing Final orders `[peer, local]`, yielding the same placement on both machines.
+- Do not claim the Qwen3-8B proof from a co-located simulation; the roadmap requires at least two directly connected PCs and ultimately a mixed-OS route.
 
 # Gotchas
-- The friend's failure showed a global IPv6 invitation candidate (`[2406:…]:45734`) but the joiner endpoint was bound to `0.0.0.0`, so Quinn rejected it before dialing. Private/loopback candidates then timed out across the internet; router mapping was unavailable.
-- Both PCs must run the corrected build and create a fresh invitation. An invitation generated by the old build may contain candidates that were not actually reachable by its endpoint.
-- Windows target is not installed on this workstation, so the Windows binary was not cross-compiled here. `socket2` 0.6.5 supplies the portable `IPV6_V6ONLY` setup used by Quinn itself.
-- Host CUDA builds require `source $HOME/cuda-env.sh`; the toolkit is under `$HOME/cuda-root` and its glibc 2.43 `rsqrt`/`rsqrtf` patch can be overwritten by re-extraction.
-- Two-PC P08 GUI flow is ready; P09 layer split still requires runtime/test commands because mesh-app has no placement controls.
-- Complete-stage `LoadSelectedModel` requires complete prepared shards; range-only artifacts are for stage loading.
+- CUDA commands require `source $HOME/cuda-env.sh`; the toolkit is under `$HOME/cuda-root`.
+- The dual-node CUDA smoke takes about 6.5 minutes because each isolated runtime prepares and loads its stage.
+- Only Qwen3-4B is cached under `$HOME/mesh-p07-smoke`; Qwen3-8B is not downloaded.
+- No SSH peers are configured in this harness. Windows target, Windows CUDA host, and macOS Metal host are unavailable here.
+- Both physical PCs must use the corrected dual-stack endpoint build and create a fresh invitation; old invitations may advertise unreachable candidates.
+- Native mesh-app launch was smoke-tested with isolated `MESH_DATA_DIR`; the runtime started without panic, but Wayland/X11 window introspection did not expose the app window to `xwininfo`.
 
 # Next
-1. Review and commit the completed working-tree changes, split by concern if useful: stage-filtered prepare/load, UI scrolling, and endpoint dual-stack support.
-2. Continue the P09 implementation by adding mesh-app controls for `LoadPipelineStage` and forced two-stage placement.
-3. Exercise the new controls with the existing dual-node P09 QUIC path and confirm stage assignment, load, generation, and token feedback end to end.
-4. Implement concurrent pipeline sequences (`max_concurrent_requests > 1`) with request/sequence-ordered queues.
-5. Run the Qwen3-8B distributed proof after concurrency and placement UX are stable.
-6. Treat Windows CUDA, macOS Metal, and the friend-PC IPv6 retry as optional host proofs; they do not block normal Linux implementation.
+1. On two model-capable PCs, run the current build, select and probe Qwen3-8B, connect them, paste one shared deployment ID, and choose opposite First/Final roles.
+2. Load both stages and confirm each UI reports the same deployment, complementary layer ranges, backend, and `0/2` available slots.
+3. Start generation from both PCs concurrently; record stage load, activation transfer, token output, stop reason, and slot recovery to `0/2`.
+4. Update the P09 checklist only after the real Qwen3-8B two-PC proof; retain the mixed-OS criterion until Windows/macOS hardware is available.
+5. Optionally retry the friend-PC IPv6 route and run Windows CUDA/macOS Metal host proofs when those machines are reachable.
+6. After P09 proof completion, continue P10 failure/restart behavior.
