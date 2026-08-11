@@ -453,7 +453,7 @@ Proof:
 Build:
 
 - [x] Implement layer placement.
-  - Evidence: `PlacementPlan` / `StageRole` / `LayerRange` in `mesh-core`; `split_even` + validate unit tests (`2026-08-10`).
+  - Evidence: `PlacementPlan` / `StageRole` / `LayerRange` in `mesh-core`; `split_even` + validate unit tests. `mesh-app` exposes a shared deployment ID, connected-peer selector, and local First/Final stage controls; the runtime derives the model, layer count, role, and range from the resolved manifest (`2026-08-10`).
 - [x] Implement partial stage loading.
   - Evidence: mesh-owned `Qwen3Stage` loads only assigned continuous layer range + role-owned embed/norm/lm_head; `build_stage_plan` / `prepare_plan` download assigned tensors (ranges or covering shards); `materialize_stage_weight_files` rewrites pure ranges into mmap-able safetensors; `LoadPipelineStage` prepares the local assignment before load (`2026-08-10`).
 - [x] Implement the accepted activation wire format.

@@ -14,14 +14,14 @@ use mesh_core::{
     AppScreen, CandidateKind, CapabilityReport, ConnectivityRecovery, CoreError,
     DEFAULT_CACHE_MAX_BYTES, DEFAULT_HOLD_LEASE_MS, DeploymentId, EndpointCandidate, EnrollmentId,
     EnrollmentProgress, GpuResourceAmount, HardwareSummaryView, InferencePhase,
-    InferenceRequestSpec, LayerRange, LinkMeasurement, LocalIdentity, LocalNodeSummary,
-    ManualForwardingGuide, MeshId, ModelCacheView, ModelDownloadProgress, ModelReference,
-    NextTokenFeedback, NodeId, PeerRecord, PeerRecordOrigin, PeerSummary, PlacementPlan,
-    ProviderAccessReport, ProviderAuthMode, RecoveryAction, ReplicaEndpointView, ReplicaHealth,
-    RequestId, ReservationCommit, ReservationId, ReservationRelease, ReserveRequest,
-    ResourceAmount, ResourceQuery, RuntimePhase, SamplingParams, StageAssignment, StageRole,
-    StopReason, TokenResultEvent, UiCommand, UiSnapshot, filter_advertised_candidates,
-    merge_peer_records, now_unix_ms, select_replica_route, sort_candidates_for_dial,
+    InferenceRequestSpec, LinkMeasurement, LocalIdentity, LocalNodeSummary, ManualForwardingGuide,
+    MeshId, ModelCacheView, ModelDownloadProgress, ModelReference, NextTokenFeedback, NodeId,
+    PeerRecord, PeerRecordOrigin, PeerSummary, PlacementPlan, ProviderAccessReport,
+    ProviderAuthMode, RecoveryAction, ReplicaEndpointView, ReplicaHealth, RequestId,
+    ReservationCommit, ReservationId, ReservationRelease, ReserveRequest, ResourceAmount,
+    ResourceQuery, RuntimePhase, SamplingParams, StageAssignment, StageRole, StopReason,
+    TokenResultEvent, UiCommand, UiSnapshot, filter_advertised_candidates, merge_peer_records,
+    now_unix_ms, select_replica_route, sort_candidates_for_dial,
 };
 use mesh_hardware::discover_capabilities;
 use mesh_inference::{
@@ -840,24 +840,10 @@ impl NodeRuntime {
             }
             UiCommand::LoadPipelineStage {
                 deployment_id,
-                model_line,
-                num_layers,
                 stage_index,
-                role,
-                layer_start,
-                layer_end,
                 node_ids,
             } => {
-                self.spawn_pipeline_stage_load(
-                    deployment_id,
-                    model_line,
-                    num_layers,
-                    stage_index,
-                    role,
-                    layer_start,
-                    layer_end,
-                    node_ids,
-                );
+                self.spawn_pipeline_stage_load(deployment_id, stage_index, node_ids);
                 self.publish();
                 false
             }
@@ -3046,12 +3032,7 @@ impl NodeRuntime {
     fn spawn_pipeline_stage_load(
         &mut self,
         deployment_id: String,
-        model_line: String,
-        num_layers: u32,
         stage_index: u16,
-        role: StageRole,
-        layer_start: u32,
-        layer_end: u32,
         node_ids: Vec<String>,
     ) {
         let Some(resolved) = self.resolved_model.clone() else {
@@ -3059,6 +3040,19 @@ impl NodeRuntime {
                 Some("Probe/resolve the model before pipeline load.".to_owned());
             return;
         };
+        let Some(num_layers) = resolved
+            .manifest
+            .architecture
+            .get("num_hidden_layers")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+        else {
+            self.state.snapshot.inference.error =
+                Some("Resolved model has no valid num_hidden_layers.".to_owned());
+            return;
+        };
+        let model_line = resolved.identity.repository.clone();
         if self.state.snapshot.inference.busy || self.state.snapshot.models.busy {
             return;
         }
@@ -3076,10 +3070,6 @@ impl NodeRuntime {
                     return;
                 }
             }
-        }
-        if let Err(error) = LayerRange::new(layer_start, layer_end) {
-            self.state.snapshot.inference.error = Some(error);
-            return;
         }
         let placement = match PlacementPlan::split_even(
             deployment_id,
@@ -3103,14 +3093,6 @@ impl NodeRuntime {
                 Some(format!("stage_index {stage_index} missing from placement"));
             return;
         };
-        if assignment.role != role
-            || assignment.layer_range.start != layer_start
-            || assignment.layer_range.end != layer_end
-        {
-            self.state.snapshot.inference.error =
-                Some("LoadPipelineStage assignment does not match split_even placement".to_owned());
-            return;
-        }
         let local_id = self
             .state
             .identity
@@ -5203,12 +5185,7 @@ mod tests {
         first_handle
             .send(UiCommand::LoadPipelineStage {
                 deployment_id: deployment_id.clone(),
-                model_line: "Qwen/Qwen3-4B".to_owned(),
-                num_layers: 36,
                 stage_index: first_assignment.stage_index,
-                role: first_assignment.role,
-                layer_start: first_assignment.layer_range.start,
-                layer_end: first_assignment.layer_range.end,
                 node_ids: node_ids.clone(),
             })
             .await
@@ -5235,12 +5212,7 @@ mod tests {
         final_handle
             .send(UiCommand::LoadPipelineStage {
                 deployment_id: deployment_id.clone(),
-                model_line: "Qwen/Qwen3-4B".to_owned(),
-                num_layers: 36,
                 stage_index: final_assignment.stage_index,
-                role: final_assignment.role,
-                layer_start: final_assignment.layer_range.start,
-                layer_end: final_assignment.layer_range.end,
                 node_ids,
             })
             .await

@@ -111,12 +111,7 @@ pub enum UiCommand {
     LoadSelectedModel,
     LoadPipelineStage {
         deployment_id: String,
-        model_line: String,
-        num_layers: u32,
         stage_index: u16,
-        role: crate::StageRole,
-        layer_start: u32,
-        layer_end: u32,
         node_ids: Vec<String>,
     },
     UnloadModel,

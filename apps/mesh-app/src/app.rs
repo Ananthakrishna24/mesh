@@ -1,5 +1,8 @@
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Theme, Ui, Vec2};
-use mesh_core::{AppScreen, ModelReference, RecoveryAction, RuntimePhase, UiCommand, UiSnapshot};
+use mesh_core::{
+    AppScreen, DeploymentId, ModelReference, NodeId, RecoveryAction, RuntimePhase, UiCommand,
+    UiSnapshot,
+};
 use mesh_node::NodeHandle;
 
 pub struct MeshApp {
@@ -12,6 +15,9 @@ pub struct MeshApp {
     max_new_tokens: u32,
     temperature: f32,
     seed: u64,
+    pipeline_deployment_id: String,
+    pipeline_peer_node_id: Option<NodeId>,
+    pipeline_local_stage_index: u16,
     shutdown_sent: bool,
 }
 
@@ -30,6 +36,9 @@ impl MeshApp {
             max_new_tokens: 64,
             temperature: 0.0,
             seed: 1,
+            pipeline_deployment_id: DeploymentId::new().to_string(),
+            pipeline_peer_node_id: None,
+            pipeline_local_stage_index: 0,
             shutdown_sent: false,
         }
     }
@@ -641,6 +650,11 @@ impl MeshApp {
                 inference.routed_node_id.as_deref().unwrap_or("—"),
             );
             kv(ui, "Status", &inference.status_line);
+            kv(
+                ui,
+                "Deployment",
+                inference.deployment_id.as_deref().unwrap_or("—"),
+            );
             if let Some(error) = &inference.error {
                 ui.colored_label(Color32::from_rgb(180, 60, 60), error);
             }
@@ -684,6 +698,109 @@ impl MeshApp {
                     .clicked()
                 {
                     self.send(UiCommand::CancelGeneration);
+                }
+            });
+            ui.add_space(8.0);
+            ui.collapsing("Two-PC pipeline placement", |ui| {
+                ui.label(
+                    RichText::new(
+                        "Use the same deployment ID on both PCs. Choose First on one PC and Final on the other.",
+                    )
+                    .weak(),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Deployment ID");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.pipeline_deployment_id)
+                            .desired_width(280.0),
+                    );
+                    if ui.button("New ID").clicked() {
+                        self.pipeline_deployment_id = DeploymentId::new().to_string();
+                    }
+                });
+
+                let selected_peer = self.pipeline_peer_node_id.and_then(|node_id| {
+                    snapshot
+                        .peers
+                        .iter()
+                        .find(|peer| peer.connected && peer.node_id == node_id)
+                });
+                if selected_peer.is_none() {
+                    self.pipeline_peer_node_id = snapshot
+                        .peers
+                        .iter()
+                        .find(|peer| peer.connected)
+                        .map(|peer| peer.node_id);
+                }
+                let peer_label = self
+                    .pipeline_peer_node_id
+                    .and_then(|node_id| {
+                        snapshot
+                            .peers
+                            .iter()
+                            .find(|peer| peer.connected && peer.node_id == node_id)
+                    })
+                    .map(|peer| format!("{} ({})", peer.display_name, peer.node_id.short_hex()))
+                    .unwrap_or_else(|| "No connected peer".to_owned());
+                egui::ComboBox::from_id_salt("pipeline_peer")
+                    .selected_text(peer_label)
+                    .show_ui(ui, |ui| {
+                        for peer in snapshot.peers.iter().filter(|peer| peer.connected) {
+                            ui.selectable_value(
+                                &mut self.pipeline_peer_node_id,
+                                Some(peer.node_id),
+                                format!("{} ({})", peer.display_name, peer.node_id.short_hex()),
+                            );
+                        }
+                    });
+
+                ui.horizontal(|ui| {
+                    ui.label("This PC runs");
+                    ui.selectable_value(
+                        &mut self.pipeline_local_stage_index,
+                        0,
+                        "First stage",
+                    );
+                    ui.selectable_value(
+                        &mut self.pipeline_local_stage_index,
+                        1,
+                        "Final stage",
+                    );
+                });
+
+                let nodes = ordered_pipeline_nodes(
+                    snapshot.local.node_id,
+                    self.pipeline_peer_node_id,
+                    self.pipeline_local_stage_index,
+                );
+                let deployment_valid =
+                    DeploymentId::parse_hex(self.pipeline_deployment_id.trim()).is_ok();
+                let can_load_stage = !inference.busy
+                    && !snapshot.models.busy
+                    && snapshot.models.resolved_identity.is_some()
+                    && deployment_valid
+                    && nodes.is_some();
+                if ui
+                    .add_enabled(can_load_stage, egui::Button::new("Load this PC's stage"))
+                    .clicked()
+                {
+                    let node_ids = nodes
+                        .expect("enabled pipeline load has a node order")
+                        .into_iter()
+                        .map(|node_id| node_id.to_string())
+                        .collect();
+                    self.send(UiCommand::LoadPipelineStage {
+                        deployment_id: self.pipeline_deployment_id.trim().to_owned(),
+                        stage_index: self.pipeline_local_stage_index,
+                        node_ids,
+                    });
+                }
+                if !deployment_valid {
+                    ui.label(RichText::new("Deployment ID must be 32 hexadecimal characters.").weak());
+                } else if snapshot.local.node_id.is_none() {
+                    ui.label(RichText::new("Local node identity is not ready.").weak());
+                } else if self.pipeline_peer_node_id.is_none() {
+                    ui.label(RichText::new("Connect a peer before loading a two-stage pipeline.").weak());
                 }
             });
             ui.add_space(8.0);
@@ -803,6 +920,20 @@ impl MeshApp {
     }
 }
 
+fn ordered_pipeline_nodes(
+    local: Option<NodeId>,
+    peer: Option<NodeId>,
+    local_stage_index: u16,
+) -> Option<[NodeId; 2]> {
+    let local = local?;
+    let peer = peer?;
+    match local_stage_index {
+        0 => Some([local, peer]),
+        1 => Some([peer, local]),
+        _ => None,
+    }
+}
+
 fn style_visuals(ctx: &egui::Context) {
     for theme in [Theme::Dark, Theme::Light] {
         let mut style = (*ctx.style_of(theme)).clone();
@@ -864,4 +995,25 @@ fn phase_badge(ui: &mut Ui, phase: RuntimePhase) {
         egui::FontId::proportional(13.0),
         color,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipeline_node_order_matches_local_stage() {
+        let local = NodeId::from_bytes([1; 32]);
+        let peer = NodeId::from_bytes([2; 32]);
+
+        assert_eq!(
+            ordered_pipeline_nodes(Some(local), Some(peer), 0),
+            Some([local, peer])
+        );
+        assert_eq!(
+            ordered_pipeline_nodes(Some(local), Some(peer), 1),
+            Some([peer, local])
+        );
+        assert_eq!(ordered_pipeline_nodes(Some(local), Some(peer), 2), None);
+    }
 }
