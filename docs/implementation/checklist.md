@@ -462,19 +462,20 @@ Build:
   - Evidence: in-process `PipelineEngine` prefill/decode across stages with FP16 activation handoff; multi-node `StageWorker` hop API + `mesh-node` stage load/control path (`2026-08-10`).
 - [x] Implement final-stage sampling.
   - Evidence: final stage owns logits + `Sampler`; greedy two-stage tokens match complete path on CUDA (`2026-08-10`).
-- [ ] Implement concurrent sequences.
+- [x] Implement concurrent sequences.
+  - Evidence: pipeline stages maintain request-scoped KV caches, transfer counters, and bounded request/transfer-ordered activation queues with two execution slots. `MESH_P09_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke cargo test -p mesh-inference --lib --release --features cuda pipeline::tests::p09_interleaved_sequences_match_sequential -- --exact --nocapture` → interleaved CUDA sequences match their sequential baselines: `A=[9707, 0, 2585]`, `B=[6033, 13, 151645]` (`2026-08-10`).
 - [x] Implement cancellation.
-  - Evidence: `PipelineEngine::cancel` clears stage KV + inbound queues; request cancel checked each step; multi-node `CancelRequest` cancels local pipeline request state (`2026-08-10`).
+  - Evidence: `PipelineEngine::cancel` clears only the cancelled request's stage KV and inbound queue; request cancel is checked each step; multi-node `CancelRequest` cancels local pipeline request state (`2026-08-10`).
 - [x] Implement queue bounds.
-  - Evidence: per-stage inbound queue capacity = `ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST` (`2026-08-10`).
+  - Evidence: per-request, per-stage inbound queue capacity = `ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST` (`2026-08-10`).
 - [x] Implement backpressure.
-  - Evidence: bounded queue rejects when full (`bounded_queue_rejects_over_capacity`) (`2026-08-10`).
+  - Evidence: request-ordered bounded queues reject over-capacity, duplicate, and stale transfers (`request_queue_orders_each_request_and_bounds_independently`) (`2026-08-10`).
 
 Proof:
 
 - [ ] The pinned Qwen3-8B model runs as continuous layer stages across at least two directly connected PCs, including a mixed Windows/Linux/macOS route.
   - Linux in-process partial proof (Qwen3-4B two-stage == complete greedy tokens on CUDA): `MESH_P09_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke cargo test -p mesh-inference --lib --release --features cuda pipeline::tests::p09_two_stage_matches_complete_greedy -- --exact --nocapture` → `backend=cuda tokens=[9707, 0, 2585, 646] text="Hello! How can"` (`2026-08-10`).
-  - Linux dual-node QUIC partial proof (Qwen3-4B forced 2-stage First+Final on one host, activations over uni-streams): `MESH_P09_MULTI_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P09_MAX_NEW_TOKENS=4 cargo test -p mesh-node --lib --release --features cuda runtime::tests::p09_dual_node_pipeline_generate_smoke -- --exact --nocapture` → both stages `backend=cuda`, generate `tokens=4 stop=max_new_tokens output="Hello! How can"` (`2026-08-10`). Qwen3-8B and mixed-OS route remain.
+  - Linux dual-node QUIC partial proof (Qwen3-4B forced 2-stage First+Final across two local runtimes, activations over uni-streams): `MESH_P09_MULTI_SMOKE=1 MESH_P07_DATA_DIR=$HOME/mesh-p07-smoke MESH_P09_MAX_NEW_TOKENS=4 cargo test -p mesh-node --lib --release --features cuda runtime::tests::p09_dual_node_pipeline_generate_smoke -- --exact --nocapture` → both stages `backend=cuda`; two concurrent sequences complete with `first_tokens=4 first_output="Hello! How can"` and `final_tokens=3 final_output="Red."` (`2026-08-10`). Qwen3-8B and mixed-OS route remain.
 
 ### P10 — Failure and restart behavior
 

@@ -3312,7 +3312,10 @@ impl NodeRuntime {
 
         // Ensure final stage has sampling state before first activation arrives.
         if final_stage.node_id == local_id {
-            self.seed_final_pipeline_request(&request, local_id, prompt_len);
+            if let Err(error) = self.seed_final_pipeline_request(&request, local_id, prompt_len) {
+                self.state.snapshot.inference.error = Some(error);
+                return Some(());
+            }
         } else if let Some(session) = self.sessions.get(&final_stage.node_id) {
             let _ = session
                 .commands
@@ -3368,22 +3371,35 @@ impl NodeRuntime {
         request: &InferenceRequestSpec,
         owner_node_id: NodeId,
         prompt_len: u32,
-    ) {
-        let Some(stage) = self.pipeline_stage.as_ref() else {
-            return;
+    ) -> Result<(), String> {
+        let (first_stage_node, max_concurrent) = {
+            let stage = self
+                .pipeline_stage
+                .as_ref()
+                .ok_or_else(|| "no local pipeline stage".to_owned())?;
+            if !stage.assignment.role.emits_logits() {
+                return Err("local stage does not emit logits".to_owned());
+            }
+            if stage.placement.deployment_id != request.deployment_id {
+                return Err("deployment mismatch".to_owned());
+            }
+            (
+                stage
+                    .placement
+                    .stages
+                    .first()
+                    .map(|item| item.node_id)
+                    .unwrap_or(stage.assignment.node_id),
+                stage.worker.max_concurrent_requests(),
+            )
         };
-        if !stage.assignment.role.emits_logits() {
-            return;
+        let is_new = !self.pipeline_requests.contains_key(&request.request_id);
+        if is_new && self.local_active_requests >= max_concurrent {
+            return Err(format!(
+                "pipeline stage has no free request slots ({}/{max_concurrent})",
+                self.local_active_requests
+            ));
         }
-        if stage.placement.deployment_id != request.deployment_id {
-            return;
-        }
-        let first_stage_node = stage
-            .placement
-            .stages
-            .first()
-            .map(|item| item.node_id)
-            .unwrap_or(stage.assignment.node_id);
         self.pipeline_requests
             .entry(request.request_id)
             .and_modify(|state| {
@@ -3402,6 +3418,12 @@ impl NodeRuntime {
                 prompt_len,
                 stop_token_ids: request.stop_token_ids.clone(),
             });
+        if is_new {
+            self.local_active_requests = self.local_active_requests.saturating_add(1);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
+        }
+        Ok(())
     }
 
     fn on_pipeline_inference_request(&mut self, from_peer: NodeId, request: InferenceRequestSpec) {
@@ -3419,7 +3441,9 @@ impl NodeRuntime {
             && stage_role != StageRole::Complete
         {
             let prompt_len = request.input_token_ids.len() as u32;
-            self.seed_final_pipeline_request(&request, from_peer, prompt_len);
+            if let Err(error) = self.seed_final_pipeline_request(&request, from_peer, prompt_len) {
+                self.reject_pipeline_request(from_peer, &request, error);
+            }
             return;
         }
 
@@ -3436,17 +3460,14 @@ impl NodeRuntime {
             let stage = self.pipeline_stage.as_ref().unwrap();
             if stage.placement.deployment_id != request.deployment_id {
                 Some("deployment mismatch".to_owned())
-            } else if !self.pipeline_requests.is_empty() && stage_role == StageRole::First {
-                // Final may already be seeded under same request id when local is complete-only.
-                if !self.pipeline_requests.contains_key(&request.request_id) {
-                    Some("pipeline stage busy".to_owned())
-                } else {
-                    None
-                }
-            } else if self.local_active_requests > 0
-                && !self.pipeline_requests.contains_key(&request.request_id)
+            } else if !self.pipeline_requests.contains_key(&request.request_id)
+                && self.local_active_requests >= stage.worker.max_concurrent_requests()
             {
-                Some("pipeline stage busy".to_owned())
+                Some(format!(
+                    "pipeline stage has no free request slots ({}/{})",
+                    self.local_active_requests,
+                    stage.worker.max_concurrent_requests()
+                ))
             } else {
                 None
             }
@@ -3499,6 +3520,7 @@ impl NodeRuntime {
             }
         };
 
+        let is_new = !self.pipeline_requests.contains_key(&request.request_id);
         self.pipeline_requests
             .entry(request.request_id)
             .and_modify(|state| {
@@ -3519,7 +3541,11 @@ impl NodeRuntime {
                 prompt_len: request.input_token_ids.len() as u32,
                 stop_token_ids: request.stop_token_ids.clone(),
             });
-        self.local_active_requests = self.local_active_requests.max(1);
+        if is_new {
+            self.local_active_requests = self.local_active_requests.saturating_add(1);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
+        }
 
         if let Err(error) = self.dispatch_stage_hop(request.request_id, hop) {
             self.fail_pipeline_request(request.request_id, error);
@@ -3570,6 +3596,8 @@ impl NodeRuntime {
                 .is_some()
             {
                 self.local_active_requests = self.local_active_requests.saturating_sub(1);
+                self.refresh_replica_views();
+                self.broadcast_replica_status();
             }
             return;
         }
@@ -3661,19 +3689,21 @@ impl NodeRuntime {
                 },
             );
             self.local_active_requests = self.local_active_requests.saturating_add(1);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
         }
 
         let incoming = StageActivation {
             header: frame.header,
             payload: frame.payload,
         };
-        let hop = {
+        let hops = {
             let stage = self.pipeline_stage.as_mut().unwrap();
             match stage
                 .worker
                 .forward_activation(deployment_id, request_id, incoming)
             {
-                Ok(hop) => hop,
+                Ok(hops) => hops,
                 Err(error) => {
                     self.fail_pipeline_request(request_id, error.to_string());
                     return;
@@ -3681,8 +3711,11 @@ impl NodeRuntime {
             }
         };
 
-        if let Err(error) = self.dispatch_stage_hop(request_id, hop) {
-            self.fail_pipeline_request(request_id, error);
+        for hop in hops {
+            if let Err(error) = self.dispatch_stage_hop(request_id, hop) {
+                self.fail_pipeline_request(request_id, error);
+                return;
+            }
         }
     }
 
@@ -3815,6 +3848,8 @@ impl NodeRuntime {
             }
             if self.pipeline_requests.remove(&request_id).is_some() {
                 self.local_active_requests = self.local_active_requests.saturating_sub(1);
+                self.refresh_replica_views();
+                self.broadcast_replica_status();
             }
         }
 
@@ -3827,7 +3862,11 @@ impl NodeRuntime {
         if let Some(stage) = self.pipeline_stage.as_mut() {
             stage.worker.cancel(request_id);
         }
-        self.local_active_requests = self.local_active_requests.saturating_sub(1);
+        if state.is_some() {
+            self.local_active_requests = self.local_active_requests.saturating_sub(1);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
+        }
         if let Some(state) = state {
             let event = TokenResultEvent {
                 deployment_id: state.deployment_id,
@@ -3889,6 +3928,8 @@ impl NodeRuntime {
         stage.worker.cancel(request_id);
         if self.pipeline_requests.remove(&request_id).is_some() {
             self.local_active_requests = self.local_active_requests.saturating_sub(1);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
         }
     }
 
@@ -3907,12 +3948,19 @@ impl NodeRuntime {
                 }
             })
             .collect();
+        let mut removed = 0u32;
         for id in ids {
             if let Some(stage) = self.pipeline_stage.as_mut() {
                 stage.worker.cancel(id);
             }
-            self.pipeline_requests.remove(&id);
-            self.local_active_requests = self.local_active_requests.saturating_sub(1);
+            if self.pipeline_requests.remove(&id).is_some() {
+                removed = removed.saturating_add(1);
+            }
+        }
+        if removed > 0 {
+            self.local_active_requests = self.local_active_requests.saturating_sub(removed);
+            self.refresh_replica_views();
+            self.broadcast_replica_status();
         }
     }
 
@@ -3940,7 +3988,7 @@ impl NodeRuntime {
             });
         }
         let stage = self.pipeline_stage.as_ref()?;
-        let max = 1u32;
+        let max = stage.worker.max_concurrent_requests();
         let health = if self.local_active_requests >= max {
             ReplicaHealth::Busy
         } else {
@@ -5236,7 +5284,7 @@ mod tests {
             final_loaded.inference.backend
         );
 
-        eprintln!("P09 multi: generate max_new_tokens={max_new_tokens}");
+        eprintln!("P09 multi: generate two concurrent sequences max_new_tokens={max_new_tokens}");
         first_handle
             .send(UiCommand::Generate {
                 prompt: "Say hi".to_owned(),
@@ -5245,34 +5293,52 @@ mod tests {
                 seed: 7,
             })
             .await
-            .expect("generate");
-        let generated = wait_for_timeout(&first_handle, Duration::from_secs(30 * 60), |snapshot| {
-            !snapshot.inference.busy
-                && (snapshot.inference.generated_tokens > 0
-                    || snapshot.inference.phase == Some(InferencePhase::Failed)
-                    || snapshot.inference.error.is_some())
-        })
-        .await;
-        assert!(
-            generated.inference.error.is_none(),
-            "pipeline generation failed: {:?}",
-            generated.inference.error
+            .expect("generate first");
+        final_handle
+            .send(UiCommand::Generate {
+                prompt: "Name one color".to_owned(),
+                max_new_tokens,
+                temperature: 0.0,
+                seed: 11,
+            })
+            .await
+            .expect("generate final");
+        let (first_generated, final_generated) = tokio::join!(
+            wait_for_timeout(&first_handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.generated_tokens > 0
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            }),
+            wait_for_timeout(&final_handle, Duration::from_secs(30 * 60), |snapshot| {
+                !snapshot.inference.busy
+                    && (snapshot.inference.generated_tokens > 0
+                        || snapshot.inference.phase == Some(InferencePhase::Failed)
+                        || snapshot.inference.error.is_some())
+            })
         );
-        assert!(
-            generated.inference.generated_tokens > 0,
-            "expected pipeline tokens: {:?}",
-            generated.inference
-        );
-        assert!(
-            !generated.inference.output_text.trim().is_empty(),
-            "empty pipeline output"
-        );
+        for (label, generated) in [("first", &first_generated), ("final", &final_generated)] {
+            assert!(
+                generated.inference.error.is_none(),
+                "{label} pipeline generation failed: {:?}",
+                generated.inference.error
+            );
+            assert!(
+                generated.inference.generated_tokens > 0,
+                "expected {label} pipeline tokens: {:?}",
+                generated.inference
+            );
+            assert!(
+                !generated.inference.output_text.trim().is_empty(),
+                "empty {label} pipeline output"
+            );
+        }
         eprintln!(
-            "P09 dual-node pipeline backend={:?} tokens={} stop={:?} output={:?}",
-            generated.inference.backend,
-            generated.inference.generated_tokens,
-            generated.inference.stop_reason,
-            generated.inference.output_text
+            "P09 dual-node concurrent pipeline first_tokens={} first_output={:?} final_tokens={} final_output={:?}",
+            first_generated.inference.generated_tokens,
+            first_generated.inference.output_text,
+            final_generated.inference.generated_tokens,
+            final_generated.inference.output_text
         );
 
         first_handle.request_shutdown().ok();

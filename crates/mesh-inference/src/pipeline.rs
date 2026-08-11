@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use mesh_compute::{Qwen3Stage, WeightFile};
 use mesh_core::{
     ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST, ActivationHeader, DeploymentId,
-    FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, LayerRange, PlacementPlan, RequestId,
+    FIRST_CONTEXT_LIMIT, LayerRange, PIPELINE_MAX_CONCURRENT_REQUESTS, PlacementPlan, RequestId,
     SamplingParams, StageRole, StopReason, TokenResultEvent, TransferKind, stage_kv_reserve_bytes,
 };
 use mesh_model::{PrepareResult, ResolvedModel, materialize_stage_weight_files};
@@ -31,37 +31,60 @@ pub enum PipelineError {
 }
 
 #[derive(Debug, Clone)]
-struct BoundedQueue<T> {
-    items: VecDeque<T>,
-    capacity: usize,
+struct RequestOrderedQueue<T> {
+    items: HashMap<RequestId, BTreeMap<u64, T>>,
+    next_sequence: HashMap<RequestId, u64>,
+    capacity_per_request: usize,
 }
 
-impl<T> BoundedQueue<T> {
-    fn new(capacity: usize) -> Self {
+impl<T> RequestOrderedQueue<T> {
+    fn new(capacity_per_request: usize) -> Self {
         Self {
-            items: VecDeque::new(),
-            capacity: capacity.max(1),
+            items: HashMap::new(),
+            next_sequence: HashMap::new(),
+            capacity_per_request: capacity_per_request.max(1),
         }
     }
 
-    fn push(&mut self, item: T) -> Result<(), PipelineError> {
-        if self.items.len() >= self.capacity {
-            return Err(PipelineError::Message("activation queue full".to_owned()));
+    fn push(&mut self, request_id: RequestId, sequence: u64, item: T) -> Result<(), PipelineError> {
+        let expected = *self.next_sequence.entry(request_id).or_insert(1);
+        if sequence < expected {
+            return Err(PipelineError::Message(format!(
+                "activation sequence {sequence} is stale; expected {expected}"
+            )));
         }
-        self.items.push_back(item);
+        let request_items = self.items.entry(request_id).or_default();
+        if request_items.len() >= self.capacity_per_request {
+            return Err(PipelineError::Message(format!(
+                "activation queue full for request {request_id}"
+            )));
+        }
+        if request_items.insert(sequence, item).is_some() {
+            return Err(PipelineError::Message(format!(
+                "duplicate activation sequence {sequence} for request {request_id}"
+            )));
+        }
         Ok(())
     }
 
-    fn pop(&mut self) -> Option<T> {
-        self.items.pop_front()
+    fn pop_ready(&mut self, request_id: RequestId) -> Option<T> {
+        let expected = *self.next_sequence.entry(request_id).or_insert(1);
+        let item = self.items.get_mut(&request_id)?.remove(&expected)?;
+        self.next_sequence
+            .insert(request_id, expected.saturating_add(1));
+        if self.items.get(&request_id).is_some_and(BTreeMap::is_empty) {
+            self.items.remove(&request_id);
+        }
+        Some(item)
     }
 
-    fn clear(&mut self) {
-        self.items.clear();
+    fn clear_request(&mut self, request_id: RequestId) {
+        self.items.remove(&request_id);
+        self.next_sequence.remove(&request_id);
     }
 
-    fn len(&self) -> usize {
-        self.items.len()
+    fn len(&self, request_id: RequestId) -> usize {
+        self.items.get(&request_id).map_or(0, BTreeMap::len)
     }
 }
 
@@ -76,7 +99,7 @@ pub struct StageWorker {
     pub role: StageRole,
     pub layer_range: LayerRange,
     stage: Qwen3Stage,
-    inbound: BoundedQueue<StageActivation>,
+    inbound: RequestOrderedQueue<StageActivation>,
     cancelled: HashSet<RequestId>,
     next_transfer_id: HashMap<RequestId, u64>,
     active_requests: HashSet<RequestId>,
@@ -97,7 +120,7 @@ impl StageWorker {
             role,
             layer_range,
             stage,
-            inbound: BoundedQueue::new(ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST as usize),
+            inbound: RequestOrderedQueue::new(ACTIVATION_MAX_IN_FLIGHT_PER_STAGE_REQUEST as usize),
             cancelled: HashSet::new(),
             next_transfer_id: HashMap::new(),
             active_requests: HashSet::new(),
@@ -147,8 +170,8 @@ impl StageWorker {
         self.stage.context_limit()
     }
 
-    pub fn seq_len(&self) -> usize {
-        self.stage.seq_len()
+    pub fn seq_len(&self, request_id: RequestId) -> usize {
+        self.stage.seq_len(request_id)
     }
 
     pub fn reservation_memory_bytes(&self, weight_bytes: u64) -> u64 {
@@ -158,40 +181,55 @@ impl StageWorker {
             FIRST_CONTEXT_LIMIT,
             self.stage.head_dim(),
             self.stage.num_layers_owned(),
-            FIRST_MAX_CONCURRENT_REQUESTS,
+            PIPELINE_MAX_CONCURRENT_REQUESTS,
             ALLOCATOR_OVERHEAD_BYTES,
         ))
     }
 
-    pub fn begin_request(&mut self, request_id: RequestId) {
+    pub fn max_concurrent_requests(&self) -> u32 {
+        PIPELINE_MAX_CONCURRENT_REQUESTS
+    }
+
+    pub fn begin_request(&mut self, request_id: RequestId) -> Result<(), PipelineError> {
+        if self.active_requests.contains(&request_id) {
+            return Ok(());
+        }
+        if self.active_requests.len() >= PIPELINE_MAX_CONCURRENT_REQUESTS as usize {
+            return Err(PipelineError::Message(format!(
+                "pipeline stage has no free request slots ({}/{})",
+                self.active_requests.len(),
+                PIPELINE_MAX_CONCURRENT_REQUESTS
+            )));
+        }
         self.cancelled.remove(&request_id);
         self.active_requests.insert(request_id);
-        self.stage.clear_kv_cache();
-        self.inbound.clear();
+        self.stage.clear_kv_cache(request_id);
+        self.inbound.clear_request(request_id);
         self.next_transfer_id.insert(request_id, 1);
+        Ok(())
     }
 
     pub fn finish_request(&mut self, request_id: RequestId) {
         self.active_requests.remove(&request_id);
         self.next_transfer_id.remove(&request_id);
-        self.stage.clear_kv_cache();
-        self.inbound.clear();
+        self.stage.clear_kv_cache(request_id);
+        self.inbound.clear_request(request_id);
     }
 
     pub fn cancel(&mut self, request_id: RequestId) {
         self.cancelled.insert(request_id);
         self.active_requests.remove(&request_id);
         self.next_transfer_id.remove(&request_id);
-        self.stage.clear_kv_cache();
-        self.inbound.clear();
+        self.stage.clear_kv_cache(request_id);
+        self.inbound.clear_request(request_id);
     }
 
     pub fn is_cancelled(&self, request_id: RequestId) -> bool {
         self.cancelled.contains(&request_id)
     }
 
-    pub fn queue_depth(&self) -> usize {
-        self.inbound.len()
+    pub fn queue_depth(&self, request_id: RequestId) -> usize {
+        self.inbound.len(request_id)
     }
 
     pub fn encode_outgoing(
@@ -261,8 +299,8 @@ impl StageWorker {
                 self.role.as_str()
             )));
         }
-        self.begin_request(request_id);
-        let activation = self.stage.prefill_tokens(token_ids)?;
+        self.begin_request(request_id)?;
+        let activation = self.stage.prefill_tokens(request_id, token_ids)?;
         self.hop_from_hidden(
             deployment_id,
             request_id,
@@ -287,8 +325,11 @@ impl StageWorker {
                 self.role.as_str()
             )));
         }
-        let sequence_position = self.stage.seq_len() as u64;
-        let activation = self.stage.decode_token(token_id)?;
+        if !self.active_requests.contains(&request_id) {
+            return Err(PipelineError::Message("request is not active".to_owned()));
+        }
+        let sequence_position = self.stage.seq_len(request_id) as u64;
+        let activation = self.stage.decode_token(request_id, token_id)?;
         self.hop_from_hidden(
             deployment_id,
             request_id,
@@ -303,7 +344,7 @@ impl StageWorker {
         deployment_id: DeploymentId,
         request_id: RequestId,
         incoming: StageActivation,
-    ) -> Result<StageHop, PipelineError> {
+    ) -> Result<Vec<StageHop>, PipelineError> {
         if self.is_cancelled(request_id) {
             return Err(PipelineError::Message("request cancelled".to_owned()));
         }
@@ -317,26 +358,42 @@ impl StageWorker {
                 "activation destination stage mismatch".to_owned(),
             ));
         }
-        self.inbound.push(incoming)?;
-        let queued = self
-            .inbound
-            .pop()
-            .ok_or_else(|| PipelineError::Message("missing queued activation".to_owned()))?;
-        let tensor = self.decode_incoming(&queued)?;
-        let activation = match queued.header.transfer_kind {
-            TransferKind::Prefill => {
-                self.begin_request(request_id);
-                self.stage.prefill_activation(&tensor)?
-            }
-            TransferKind::Decode => self.stage.decode_activation(&tensor)?,
-        };
-        self.hop_from_hidden(
-            deployment_id,
-            request_id,
-            queued.header.transfer_kind,
-            queued.header.sequence_position,
-            &activation,
-        )
+        self.begin_request(request_id)?;
+        let transfer_id = incoming.header.transfer_id;
+        self.inbound.push(request_id, transfer_id, incoming)?;
+
+        let mut hops = Vec::new();
+        while let Some(queued) = self.inbound.pop_ready(request_id) {
+            let tensor = self.decode_incoming(&queued)?;
+            let activation = match queued.header.transfer_kind {
+                TransferKind::Prefill => {
+                    if queued.header.transfer_id != 1 || queued.header.sequence_position != 0 {
+                        return Err(PipelineError::Message(
+                            "first activation must be prefill at sequence position 0".to_owned(),
+                        ));
+                    }
+                    self.stage.prefill_activation(request_id, &tensor)?
+                }
+                TransferKind::Decode => {
+                    let expected_position = self.stage.seq_len(request_id) as u64;
+                    if queued.header.sequence_position != expected_position {
+                        return Err(PipelineError::Message(format!(
+                            "decode sequence position {} != expected {expected_position}",
+                            queued.header.sequence_position
+                        )));
+                    }
+                    self.stage.decode_activation(request_id, &tensor)?
+                }
+            };
+            hops.push(self.hop_from_hidden(
+                deployment_id,
+                request_id,
+                queued.header.transfer_kind,
+                queued.header.sequence_position,
+                &activation,
+            )?);
+        }
+        Ok(hops)
     }
 
     pub fn logits_from_hidden(
@@ -477,14 +534,38 @@ impl PipelineEngine {
             return Err(PipelineError::Message("pipeline has no stages".to_owned()));
         }
 
-        for stage in &mut self.stages {
-            stage.cancelled.remove(&request_id);
-            stage.active_requests.insert(request_id);
-            stage.stage.clear_kv_cache();
-            stage.inbound.clear();
-            stage.next_transfer_id.insert(request_id, 1);
+        for index in 0..self.stages.len() {
+            if let Err(error) = self.stages[index].begin_request(request_id) {
+                for stage in &mut self.stages[..index] {
+                    stage.finish_request(request_id);
+                }
+                return Err(error);
+            }
         }
 
+        let result = self.generate_active_sequence(
+            prompt_token_ids,
+            params,
+            stop_token_ids,
+            request_id,
+            &mut on_token,
+            &mut should_continue,
+        );
+        for stage in &mut self.stages {
+            stage.finish_request(request_id);
+        }
+        result
+    }
+
+    fn generate_active_sequence(
+        &mut self,
+        prompt_token_ids: &[u32],
+        params: SamplingParams,
+        stop_token_ids: &[u32],
+        request_id: RequestId,
+        on_token: &mut impl FnMut(&TokenResultEvent),
+        should_continue: &mut impl FnMut() -> bool,
+    ) -> Result<GenerationOutput, PipelineError> {
         let final_index = self.stages.len() - 1;
         let vocab_size = self.stages[final_index].stage.vocab_size();
         let context_limit = self.stages[final_index].stage.context_limit();
@@ -539,13 +620,6 @@ impl PipelineEngine {
             logits = self.run_decode(request_id, outcome.token_id)?;
         }
 
-        for stage in &mut self.stages {
-            stage.active_requests.remove(&request_id);
-            stage.next_transfer_id.remove(&request_id);
-            stage.stage.clear_kv_cache();
-            stage.inbound.clear();
-        }
-
         let text = self
             .tokenizer
             .decode_stream(&generated_ids)
@@ -594,7 +668,11 @@ impl PipelineEngine {
         };
 
         for index in 1..self.stages.len() {
-            match self.stages[index].forward_activation(self.deployment_id, request_id, pending)? {
+            match single_stage_hop(self.stages[index].forward_activation(
+                self.deployment_id,
+                request_id,
+                pending,
+            )?)? {
                 StageHop::Logits(logits) => return Ok(logits),
                 StageHop::Activation(activation) => pending = activation,
             }
@@ -622,7 +700,11 @@ impl PipelineEngine {
         };
 
         for index in 1..self.stages.len() {
-            match self.stages[index].forward_activation(self.deployment_id, request_id, pending)? {
+            match single_stage_hop(self.stages[index].forward_activation(
+                self.deployment_id,
+                request_id,
+                pending,
+            )?)? {
                 StageHop::Logits(logits) => return Ok(logits),
                 StageHop::Activation(activation) => pending = activation,
             }
@@ -632,6 +714,15 @@ impl PipelineEngine {
             "pipeline decode failed to reach final stage".to_owned(),
         ))
     }
+}
+fn single_stage_hop(mut hops: Vec<StageHop>) -> Result<StageHop, PipelineError> {
+    if hops.len() != 1 {
+        return Err(PipelineError::Message(format!(
+            "expected one ordered stage hop, got {}",
+            hops.len()
+        )));
+    }
+    Ok(hops.pop().expect("length checked"))
 }
 
 #[cfg(test)]
@@ -823,17 +914,177 @@ mod tests {
     }
 
     #[test]
-    fn bounded_queue_rejects_over_capacity() {
-        let mut queue = BoundedQueue::new(2);
-        queue.push(1).unwrap();
-        queue.push(2).unwrap();
+    fn p09_interleaved_sequences_match_sequential() {
+        let Some(root) = smoke_root() else {
+            eprintln!("skipping P09 concurrency smoke; set MESH_P09_SMOKE=1 and MESH_P07_DATA_DIR");
+            return;
+        };
+        let prefer_cuda = cfg!(feature = "cuda");
+        let weights = weight_files(&root);
+        let config = config_path(&root);
+        let tokenizer =
+            MeshTokenizer::load(&tokenizer_path(&root), "", QWEN3_EOS_TOKEN_ID).expect("tokenizer");
+        let prompts = [
+            tokenizer.encode_chat(None, "Say hi").expect("encode A"),
+            tokenizer
+                .encode_chat(None, "Name one color")
+                .expect("encode B"),
+        ];
+        let params = SamplingParams {
+            temperature: 0.0,
+            top_k: 0,
+            top_p: 1.0,
+            repetition_penalty: 1.0,
+            seed: 11,
+            max_new_tokens: 3,
+        };
+        let deployment_id = DeploymentId::from_bytes([10; 16]);
+        let nodes = [NodeId::from_bytes([1; 32]), NodeId::from_bytes([2; 32])];
+        let placement = PlacementPlan::split_even(deployment_id, "Qwen/Qwen3-4B", 36, &nodes)
+            .expect("placement");
+        let stages = placement
+            .stages
+            .iter()
+            .map(|assignment| {
+                StageWorker::load(
+                    assignment.stage_index,
+                    assignment.role,
+                    assignment.layer_range,
+                    &config,
+                    &weights,
+                    prefer_cuda,
+                )
+                .expect("stage load")
+            })
+            .collect();
+        let mut pipeline = PipelineEngine {
+            deployment_id,
+            model_line: "Qwen/Qwen3-4B".to_owned(),
+            placement,
+            stages,
+            tokenizer,
+        };
+        assert!(pipeline.stages[0].max_concurrent_requests() > 1);
+
+        let baseline_a = pipeline
+            .generate_from_tokens(
+                &prompts[0],
+                params,
+                &[],
+                RequestId::from_bytes([20; 16]),
+                |_| {},
+                || true,
+            )
+            .expect("sequential A")
+            .tokens
+            .into_iter()
+            .map(|event| event.token_id)
+            .collect::<Vec<_>>();
+        let baseline_b = pipeline
+            .generate_from_tokens(
+                &prompts[1],
+                params,
+                &[],
+                RequestId::from_bytes([21; 16]),
+                |_| {},
+                || true,
+            )
+            .expect("sequential B")
+            .tokens
+            .into_iter()
+            .map(|event| event.token_id)
+            .collect::<Vec<_>>();
+
+        let requests = [
+            RequestId::from_bytes([30; 16]),
+            RequestId::from_bytes([31; 16]),
+        ];
+        let mut logits = [
+            pipeline
+                .run_prefill(requests[0], &prompts[0])
+                .expect("interleaved prefill A"),
+            pipeline
+                .run_prefill(requests[1], &prompts[1])
+                .expect("interleaved prefill B"),
+        ];
+        let vocab_size = pipeline.stages.last().unwrap().vocab_size();
+        let context_limit = pipeline.stages.last().unwrap().context_limit();
+        let mut samplers = [
+            Sampler::new(
+                params,
+                vocab_size,
+                pipeline.tokenizer.eos_token_id,
+                Vec::new(),
+                context_limit,
+                &prompts[0],
+            )
+            .expect("sampler A"),
+            Sampler::new(
+                params,
+                vocab_size,
+                pipeline.tokenizer.eos_token_id,
+                Vec::new(),
+                context_limit,
+                &prompts[1],
+            )
+            .expect("sampler B"),
+        ];
+        let mut interleaved = [Vec::new(), Vec::new()];
+        let mut done = [false, false];
+        while !done.iter().all(|item| *item) {
+            for index in 0..2 {
+                if done[index] {
+                    continue;
+                }
+                let outcome = samplers[index]
+                    .sample(&logits[index])
+                    .expect("interleaved sample");
+                interleaved[index].push(outcome.token_id);
+                done[index] = outcome.is_last;
+                if !outcome.is_last {
+                    logits[index] = pipeline
+                        .run_decode(requests[index], outcome.token_id)
+                        .expect("interleaved decode");
+                }
+            }
+        }
+        for stage in &mut pipeline.stages {
+            for request_id in requests {
+                stage.finish_request(request_id);
+            }
+        }
+
+        assert_eq!(interleaved[0], baseline_a);
+        assert_eq!(interleaved[1], baseline_b);
+        eprintln!(
+            "P09 concurrency ok backend={} A={:?} B={:?}",
+            pipeline.stages[0].backend().as_str(),
+            interleaved[0],
+            interleaved[1]
+        );
+    }
+
+    #[test]
+    fn request_queue_orders_each_request_and_bounds_independently() {
+        let request_a = RequestId::from_bytes([1; 16]);
+        let request_b = RequestId::from_bytes([2; 16]);
+        let mut queue = RequestOrderedQueue::new(2);
+
+        queue.push(request_a, 2, "a2").unwrap();
+        queue.push(request_a, 1, "a1").unwrap();
+        queue.push(request_b, 1, "b1").unwrap();
+        assert_eq!(queue.pop_ready(request_a), Some("a1"));
+        assert_eq!(queue.pop_ready(request_b), Some("b1"));
+        assert_eq!(queue.pop_ready(request_a), Some("a2"));
+
+        queue.push(request_a, 3, "a3").unwrap();
+        queue.push(request_a, 4, "a4").unwrap();
         assert!(
             queue
-                .push(3)
+                .push(request_a, 5, "a5")
                 .unwrap_err()
                 .to_string()
                 .contains("queue full")
         );
-        assert_eq!(queue.pop(), Some(1));
     }
 }

@@ -4,6 +4,7 @@ use crate::{DeploymentId, NodeId, RequestId};
 
 pub const FIRST_CONTEXT_LIMIT: u32 = 4096;
 pub const FIRST_MAX_CONCURRENT_REQUESTS: u32 = 1;
+pub const PIPELINE_MAX_CONCURRENT_REQUESTS: u32 = 2;
 pub const DEFAULT_TEMPERATURE: f32 = 0.7;
 pub const DEFAULT_TOP_P: f32 = 0.8;
 pub const DEFAULT_TOP_K: u32 = 20;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,7 +10,7 @@ use candle_transformers::models::with_tracing::{
     Embedding, Linear, RmsNorm, linear_b, linear_no_bias,
 };
 use candle_transformers::utils::repeat_kv;
-use mesh_core::{FIRST_CONTEXT_LIMIT, LayerRange, StageRole};
+use mesh_core::{FIRST_CONTEXT_LIMIT, LayerRange, RequestId, StageRole};
 
 use crate::{
     BackendKind, ComputeError, ComputeResult, WeightFile, group_complete_weight_files,
@@ -93,7 +94,7 @@ struct Qwen3Attention {
     head_dim: usize,
     hidden_size: usize,
     rotary_emb: Arc<Qwen3RotaryEmbedding>,
-    kv_cache: ConcatKvCache,
+    kv_caches: HashMap<RequestId, ConcatKvCache>,
 }
 
 impl Qwen3Attention {
@@ -151,12 +152,13 @@ impl Qwen3Attention {
             head_dim,
             hidden_size,
             rotary_emb,
-            kv_cache: ConcatKvCache::new(2),
+            kv_caches: HashMap::new(),
         })
     }
 
     fn forward(
         &mut self,
+        request_id: RequestId,
         x: &Tensor,
         attn_mask: Option<&Tensor>,
         offset: usize,
@@ -179,7 +181,11 @@ impl Qwen3Attention {
         let q = q_flat.reshape((b, self.num_heads, l, self.head_dim))?;
         let k = k_flat.reshape((b, self.num_kv_heads, l, self.head_dim))?;
         let (q, k) = self.rotary_emb.apply(&q, &k, offset)?;
-        let (k, v) = self.kv_cache.append(&k, &v)?;
+        let (k, v) = self
+            .kv_caches
+            .entry(request_id)
+            .or_insert_with(|| ConcatKvCache::new(2))
+            .append(&k, &v)?;
         let on_cpu = x.device().is_cpu();
         if on_cpu {
             return self.forward_cpu_flash_attn(&q, &k, &v, offset, b, l);
@@ -255,8 +261,8 @@ impl Qwen3Attention {
             .apply(&self.o_proj)?)
     }
 
-    fn clear_kv_cache(&mut self) {
-        self.kv_cache.reset();
+    fn clear_kv_cache(&mut self, request_id: RequestId) {
+        self.kv_caches.remove(&request_id);
     }
 }
 
@@ -288,20 +294,21 @@ impl DecoderLayer {
 
     fn forward(
         &mut self,
+        request_id: RequestId,
         x: &Tensor,
         mask: Option<&Tensor>,
         offset: usize,
     ) -> ComputeResult<Tensor> {
         let h = self.ln1.forward(x)?;
-        let h = self.self_attn.forward(&h, mask, offset)?;
+        let h = self.self_attn.forward(request_id, &h, mask, offset)?;
         let x = (x + h)?;
         let h2 = self.ln2.forward(&x)?;
         let h2 = h2.apply(&self.mlp)?;
         Ok((x + h2)?)
     }
 
-    fn clear_kv_cache(&mut self) {
-        self.self_attn.clear_kv_cache();
+    fn clear_kv_cache(&mut self, request_id: RequestId) {
+        self.self_attn.clear_kv_cache(request_id);
     }
 }
 
@@ -316,7 +323,7 @@ pub struct Qwen3Stage {
     layers: Vec<DecoderLayer>,
     final_norm: Option<RmsNorm>,
     lm_head: Option<Linear>,
-    seq_len: usize,
+    seq_lens: HashMap<RequestId, usize>,
 }
 
 impl Qwen3Stage {
@@ -434,7 +441,7 @@ impl Qwen3Stage {
             layers,
             final_norm,
             lm_head,
-            seq_len: 0,
+            seq_lens: HashMap::new(),
         })
     }
 
@@ -450,15 +457,15 @@ impl Qwen3Stage {
         Self::load(config_json, &weight_files, role, layer_range, prefer_cuda)
     }
 
-    pub fn clear_kv_cache(&mut self) {
+    pub fn clear_kv_cache(&mut self, request_id: RequestId) {
         for layer in &mut self.layers {
-            layer.clear_kv_cache();
+            layer.clear_kv_cache(request_id);
         }
-        self.seq_len = 0;
+        self.seq_lens.remove(&request_id);
     }
 
-    pub fn seq_len(&self) -> usize {
-        self.seq_len
+    pub fn seq_len(&self, request_id: RequestId) -> usize {
+        self.seq_lens.get(&request_id).copied().unwrap_or(0)
     }
 
     pub fn context_limit(&self) -> u32 {
@@ -485,7 +492,12 @@ impl Qwen3Stage {
         self.config.hidden_size as u32
     }
 
-    pub fn forward_tokens(&mut self, token_ids: &[u32], offset: usize) -> ComputeResult<Tensor> {
+    pub fn forward_tokens(
+        &mut self,
+        request_id: RequestId,
+        token_ids: &[u32],
+        offset: usize,
+    ) -> ComputeResult<Tensor> {
         if !self.role.accepts_token_ids() {
             return Err(ComputeError::Message(format!(
                 "stage role {} rejects token ids",
@@ -503,11 +515,12 @@ impl Qwen3Stage {
             .as_ref()
             .ok_or_else(|| ComputeError::Message("missing embedding weights".to_owned()))?;
         let hidden = embed.forward(&input)?;
-        self.forward_hidden(&hidden, offset)
+        self.forward_hidden(request_id, &hidden, offset)
     }
 
     pub fn forward_activation(
         &mut self,
+        request_id: RequestId,
         activation: &Tensor,
         offset: usize,
     ) -> ComputeResult<Tensor> {
@@ -516,41 +529,53 @@ impl Qwen3Stage {
                 "first stage expects token ids, not activations".to_owned(),
             ));
         }
-        self.forward_hidden(activation, offset)
+        self.forward_hidden(request_id, activation, offset)
     }
 
-    pub fn prefill_tokens(&mut self, token_ids: &[u32]) -> ComputeResult<Tensor> {
-        self.clear_kv_cache();
-        let output = self.forward_tokens(token_ids, 0)?;
-        self.seq_len = token_ids.len();
+    pub fn prefill_tokens(
+        &mut self,
+        request_id: RequestId,
+        token_ids: &[u32],
+    ) -> ComputeResult<Tensor> {
+        self.clear_kv_cache(request_id);
+        let output = self.forward_tokens(request_id, token_ids, 0)?;
+        self.seq_lens.insert(request_id, token_ids.len());
         Ok(output)
     }
 
-    pub fn decode_token(&mut self, token_id: u32) -> ComputeResult<Tensor> {
-        let offset = self.seq_len;
-        let output = self.forward_tokens(&[token_id], offset)?;
-        self.seq_len = self.seq_len.saturating_add(1);
+    pub fn decode_token(&mut self, request_id: RequestId, token_id: u32) -> ComputeResult<Tensor> {
+        let offset = self.seq_len(request_id);
+        let output = self.forward_tokens(request_id, &[token_id], offset)?;
+        self.seq_lens.insert(request_id, offset.saturating_add(1));
         Ok(output)
     }
 
-    pub fn prefill_activation(&mut self, activation: &Tensor) -> ComputeResult<Tensor> {
-        self.clear_kv_cache();
+    pub fn prefill_activation(
+        &mut self,
+        request_id: RequestId,
+        activation: &Tensor,
+    ) -> ComputeResult<Tensor> {
+        self.clear_kv_cache(request_id);
         let (_batch, seq, _hidden) = activation.dims3()?;
-        let output = self.forward_activation(activation, 0)?;
-        self.seq_len = seq;
+        let output = self.forward_activation(request_id, activation, 0)?;
+        self.seq_lens.insert(request_id, seq);
         Ok(output)
     }
 
-    pub fn decode_activation(&mut self, activation: &Tensor) -> ComputeResult<Tensor> {
+    pub fn decode_activation(
+        &mut self,
+        request_id: RequestId,
+        activation: &Tensor,
+    ) -> ComputeResult<Tensor> {
         let (_batch, seq, _hidden) = activation.dims3()?;
         if seq != 1 {
             return Err(ComputeError::Message(
                 "decode activation sequence length must be 1".to_owned(),
             ));
         }
-        let offset = self.seq_len;
-        let output = self.forward_activation(activation, offset)?;
-        self.seq_len = self.seq_len.saturating_add(1);
+        let offset = self.seq_len(request_id);
+        let output = self.forward_activation(request_id, activation, offset)?;
+        self.seq_lens.insert(request_id, offset.saturating_add(1));
         Ok(output)
     }
 
@@ -607,7 +632,12 @@ impl Qwen3Stage {
         Ok(tensor.to_dtype(self.dtype)?)
     }
 
-    fn forward_hidden(&mut self, hidden: &Tensor, offset: usize) -> ComputeResult<Tensor> {
+    fn forward_hidden(
+        &mut self,
+        request_id: RequestId,
+        hidden: &Tensor,
+        offset: usize,
+    ) -> ComputeResult<Tensor> {
         let (b, l, h) = hidden.dims3()?;
         if h != self.config.hidden_size {
             return Err(ComputeError::Message(format!(
@@ -623,7 +653,7 @@ impl Qwen3Stage {
         };
         let mut h_tensor = hidden.clone();
         for layer in &mut self.layers {
-            h_tensor = layer.forward(&h_tensor, causal.as_ref(), offset)?;
+            h_tensor = layer.forward(request_id, &h_tensor, causal.as_ref(), offset)?;
         }
         if let Some(norm) = &self.final_norm {
             h_tensor = norm.forward(&h_tensor)?;

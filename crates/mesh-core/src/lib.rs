@@ -32,9 +32,10 @@ pub use inference::{
     DEFAULT_MAX_NEW_TOKENS, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
     DEFAULT_TOP_P, FIRST_CONTEXT_LIMIT, FIRST_MAX_CONCURRENT_REQUESTS, InferencePhase,
     InferenceRequestSpec, InferenceView, KV_BYTES_PER_ELEMENT, LayerRange, MAX_PIPELINE_STAGES,
-    NextTokenFeedback, PlacementPlan, ReplicaEndpointView, ReplicaHealth, SamplingParams,
-    StageAssignment, StageRole, StopReason, TokenResultEvent, WARMUP_MAX_NEW_TOKENS,
-    per_layer_kv_bytes, request_stage_kv_bytes, select_replica_route, stage_kv_reserve_bytes,
+    NextTokenFeedback, PIPELINE_MAX_CONCURRENT_REQUESTS, PlacementPlan, ReplicaEndpointView,
+    ReplicaHealth, SamplingParams, StageAssignment, StageRole, StopReason, TokenResultEvent,
+    WARMUP_MAX_NEW_TOKENS, per_layer_kv_bytes, request_stage_kv_bytes, select_replica_route,
+    stage_kv_reserve_bytes,
 };
 pub use invite::{
     INVITE_PREFIX, InvitationText, build_invite, candidates_from_proto, candidates_to_proto,
